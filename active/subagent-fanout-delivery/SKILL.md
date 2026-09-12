@@ -3,7 +3,7 @@ name: subagent-fanout-delivery
 description: "Use when splitting a multi-artifact build across subagents."
 license: MIT
 metadata:
-  hermes:
+  agent:
     tags: [delegation, parallel, fan-out, verification, tooling]
     related_skills: [plan, pre-commit-verification, deliverable-checker-suite]
 ---

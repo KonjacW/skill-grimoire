@@ -3,7 +3,7 @@ name: review-gate
 description: "Use when a repository change with behavior impact is preparing for push and needs an independent risk-scaled review."
 license: MIT
 metadata:
-  hermes:
+  agent:
     tags: [review, gate, push, workflow]
     related_skills: [subagent-fanout-delivery, pre-commit-verification]
 ---

@@ -3,7 +3,7 @@ name: using-superpowers
 description: "Use when choosing workflow skills for a task with uncertain scope, shared contracts, or meaningful change risk."
 license: MIT
 metadata:
-  hermes:
+  agent:
     tags: [superpowers, using-superpowers]
     related_skills: []
 ---
