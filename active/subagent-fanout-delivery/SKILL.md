@@ -1,6 +1,6 @@
 ---
 name: subagent-fanout-delivery
-description: "Use when splitting a multi-artifact build across subagents."
+description: "Use when splitting multi-artifact work across subagents."
 license: MIT
 metadata:
   agent:

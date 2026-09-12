@@ -44,6 +44,8 @@ Save the plan with `write_file` under:
 
 Treat that as relative to the active working directory / backend workspace. file tools are workspace-aware, so using this relative path keeps the plan with the workspace on local, docker, ssh, modal, and daytona backends.
 
+> 非 Hermes 宿主（Codex 等）：计划目录改用 `docs/plans/`。
+
 If the runtime provides a specific target path, use that exact path.
 If not, create a sensible timestamped filename yourself under `docs/plans/`.
 
@@ -335,3 +337,8 @@ Frequent commits
 ```
 
 **A good plan makes implementation obvious.**
+
+## 归属
+
+Writing craft adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT)。
+本技能由 Hermes Agent 维护；`version: 2.0.0` 之前的版本信息保留在此处。

@@ -1,6 +1,6 @@
 ---
 name: pre-commit-verification
-description: "Pre-commit review: security scan, quality gates, auto-fix."
+description: "Pre-commit: security scan, quality gates, auto-fix."
 license: MIT
 metadata:
   agent:
@@ -280,3 +280,8 @@ tests exist, tests pass, no regressions.
 - **No test framework found** — skip regression check, reviewer verdict still runs
 - **Lint tools not installed** — skip that check silently, don't fail
 - **Auto-fix introduces new issues** — counts as a new failure, cycle continues
+
+## 归属
+
+Adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT) 与 MorAlekss 的 pre-commit review 工作流。
+本技能由 Hermes Agent 维护；`version: 2.0.0` 之前的版本信息保留在此处。

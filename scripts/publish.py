@@ -20,16 +20,16 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CODEX = "C:/Users/KonjacW/.codex/skills"
 HERMES = "C:/Users/KonjacW/AppData/Local/hermes/skills"
 
-# 白名单：发布哪些技能，以及它们的源目录（可跨技能树）
+# 白名单：发布哪些技能，以及它们的源目录（唯一权威副本 = CODEX/active）
 SOURCES = {
     "review-gate":                       f"{CODEX}/active/review-gate",
     "using-superpowers":                 f"{CODEX}/active/using-superpowers",
     "agent-handover-prompts":            f"{CODEX}/active/agent-handover-prompts",
     "subagent-fanout-delivery":          f"{CODEX}/active/subagent-fanout-delivery",
-    "pre-commit-verification":           f"{HERMES}/software-development/pre-commit-verification",
-    "plan":                              f"{HERMES}/software-development/plan",
-    "spike":                             f"{HERMES}/software-development/spike",
-    "finishing-a-development-branch":    f"{HERMES}/superpowers/finishing-a-development-branch",
+    "pre-commit-verification":           f"{CODEX}/active/pre-commit-verification",
+    "plan":                              f"{CODEX}/active/plan",
+    "spike":                             f"{CODEX}/active/spike",
+    "finishing-a-development-branch":    f"{CODEX}/active/finishing-a-development-branch",
 }
 KEEP_TOP = {"active", "scripts", "README.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
 TEXT_EXT = {".md", ".json", ".py", ".js", ".sh", ".ps1", ".dot", ".yaml", ".yml", ".toml", ".txt", ".html", ".css"}

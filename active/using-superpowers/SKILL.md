@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: "Use when choosing workflow skills for a task with uncertain scope, shared contracts, or meaningful change risk."
+description: "Use when picking workflow skills for an unclear task."
 license: MIT
 metadata:
   agent:

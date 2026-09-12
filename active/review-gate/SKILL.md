@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Use when a repository change with behavior impact is preparing for push and needs an independent risk-scaled review."
+description: "Use when repo changes need review before push."
 license: MIT
 metadata:
   agent:

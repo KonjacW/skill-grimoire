@@ -214,3 +214,7 @@ place. If your platform provides a workspace-exit tool, use it.
 ## 相关
 
 - worktree 的前置条件与收尾边界（何时才建 worktree；收尾不得自作主张 `merge`/`push`/清理分支）：见 `references/worktree-setup.md`。
+
+## 归属
+
+Adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT)；上游作者即 `obra/superpowers`（MIT）。
