@@ -33,7 +33,7 @@ SOURCES = {
     # 2026-09-12 加入：上游 obra/superpowers 的 MIT 许可已经 GitHub API 实测核实，随包发布（保署名）
     "long-running-progress-monitoring":  f"{CODEX}/active/long-running-progress-monitoring",
 }
-KEEP_TOP = {"active", "scripts", "README.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
+KEEP_TOP = {"active", "scripts", "README.md", "ROADMAP.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
 TEXT_EXT = {".md", ".json", ".py", ".js", ".sh", ".ps1", ".dot", ".yaml", ".yml", ".toml", ".txt", ".html", ".css"}
 SKIP_DIRS = {".git", "scripts"}
 
