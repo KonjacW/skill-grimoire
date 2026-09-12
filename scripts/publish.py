@@ -41,13 +41,7 @@ FRONTMATTER_KEY_RENAME = [("  hermes:", "  agent:")]   # metadata 下的宿主�
 
 # —— 2) 逐字替换（长模式在前）——
 REPLACEMENTS = [
-    # 私人库路径 → 占位符
-    (r"C:\\\\Users\\\\KonjacW\\\\REDACTED\\\\1\\\\KonjacW Sync", "<OBSIDIAN_VAULT>"),
-    (r"C:\\Users\\KonjacW\\REDACTED\\1\\KonjacW Sync", "<OBSIDIAN_VAULT>"),
-    ("C:/Users/KonjacW/REDACTED/1/KonjacW Sync", "<OBSIDIAN_VAULT>"),
-    (r"D:\\\\REDACTED", "<NOTE_VAULT>"),
-    (r"D:\\REDACTED", "<NOTE_VAULT>"),
-    ("D:/REDACTED", "<NOTE_VAULT>"),
+    # 私人库路径 → 占位符：这些原串本身含私人路径，已移入本机私有表，见 path_replacements()
     # 本机绝对路径 → 可移植形式
     (r"C:\\\\Users\\\\KonjacW\\\\.codex\\\\skills\\\\active", "~/.codex/skills/active"),
     (r"C:\\Users\\KonjacW\\.codex\\skills\\active", "~/.codex/skills/active"),
@@ -124,6 +118,9 @@ def load_sensitive():
     if not data.get("line_rules"):
         print("✗ 脱敏表缺 line_rules（整行重写规则；留空会让私人样本行被原样发布）")
         return None
+    if not data.get("path_replacements"):
+        print("✗ 脱敏表缺 path_replacements（私有路径替换对）")
+        return None
     return out
 
 
@@ -131,6 +128,15 @@ def load_line_rules():
     """整行重写规则：[(相对路径, 已编译正则, 替换整行文本)]，全部来自本机私有表。"""
     data = json.load(open(LOCAL_REDACT, encoding="utf-8"))
     return [(rel, re.compile(pat, re.I), rep) for rel, pat, rep in data["line_rules"]]
+
+
+def path_replacements():
+    """私有路径的字面串替换对 [(原串, 占位符)]，同样来自本机私有表。
+
+    注意这些是**字面串**（scrub 用 count/replace），不是正则——别写成 re。
+    """
+    data = json.load(open(LOCAL_REDACT, encoding="utf-8"))
+    return [(o, n) for o, n in data["path_replacements"]]
 
 
 def scan_rules():
@@ -184,7 +190,7 @@ def scrub(text: str):
     n = 0
     for rx, fn in REGEX_RULES:
         text, k = rx.subn(fn, text); n += k
-    for old, new in REPLACEMENTS:
+    for old, new in path_replacements() + REPLACEMENTS:
         c = text.count(old)
         if c:
             text = text.replace(old, new); n += c
