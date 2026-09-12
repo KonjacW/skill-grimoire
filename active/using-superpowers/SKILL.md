@@ -34,4 +34,6 @@ metadata:
 
 ## 平台适配
 
+- **设计意图与三路分流的权威描述**：Obsidian 笔记「Agent / threadgate-workflow-current」（04 知识库）。改路由或改工作流前先读它；两宿主的技能面与降级路径见该笔记的宿主可用性矩阵。
+
 仅在平台行为会影响当前任务时读取 `references/codex-tools.md`、`references/pi-tools.md` 或 `references/antigravity-tools.md`。
