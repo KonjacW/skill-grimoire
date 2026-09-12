@@ -36,4 +36,4 @@ metadata:
 
 提示模板见 `references/review-prompt.md`。`AGENTS.md` 的 push 前硬门槛保持权威。
 
-> 本技能两侧共用（Codex 原生 + Hermes 经 `external_dirs`）。frontmatter `related_skills` 里的 `subagent-fanout-delivery`、`pre-commit-verification` 是**Hermes 侧**落点（合并后的真实位置）；Codex 侧没有这两个技能名，按本节规则执行即可。
+> frontmatter 里的 `related_skills` 只作交叉引用。缺失的技能不影响本技能独立使用——按本文各节执行即可。

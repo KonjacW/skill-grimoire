@@ -7,7 +7,7 @@ Add to your Codex config (`~/.codex/config.toml`):
 multi_agent = true
 ```
 
-This enables the host's subagent dispatch and wait operations for skills like `review-gate` and, on the Hermes side, `subagent-fanout-delivery`. Use only tool names actually exposed by the current host. If the host cannot resume an agent, dispatch each fix round as a fresh implementer carrying the brief, report, and findings. Parallel implementation may fall back to serial work; an independent Review may not fall back to self-review.
+This enables the host's subagent dispatch and wait operations for skills like `review-gate` and `subagent-fanout-delivery`. Use only tool names actually exposed by the current host. If the host cannot resume an agent, dispatch each fix round as a fresh implementer carrying the brief, report, and findings. Parallel implementation may fall back to serial work; an independent Review may not fall back to self-review.
 
 ## Environment Detection
 

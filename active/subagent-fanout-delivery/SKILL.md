@@ -78,4 +78,4 @@ for f in <本批模块>; do python "$f.py" --smoke; echo "$f exit=$?"; done   # 
 
 - 并行重叠分级（R1/R2/R3）与写入权边界：见 `references/overlap-classification.md`。
 - 资料本地化 / 外部知识库类批量（索引字段、六项完整性检查、文献卡片模板、`.kb_meta.json` 分离）→ 执行时按宿主可用的知识库类技能处理。
-- frontmatter 里的 `related_skills`（`plan`、`pre-commit-verification`、`deliverable-checker-suite`）是 Hermes 侧落点；Codex 侧没有这些技能名，按本技能正文的 R1/R2/R3 与任务卡契约执行。
+- frontmatter 里的 `related_skills`（`plan`、`pre-commit-verification`、`deliverable-checker-suite`）是同一作者其他技能的名称；这些技能缺失时，按本技能正文的 R1/R2/R3 与任务卡契约执行。

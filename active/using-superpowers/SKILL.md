@@ -24,13 +24,13 @@ metadata:
 
 ## 一次并行判断
 
-入口路由同时完成唯一一次并行判断。只有以下条件同时满足时，才做并行派发（分级与任务卡规则见 Hermes 侧技能 `subagent-fanout-delivery` 的 `references/overlap-classification.md`；Codex 侧没有这个技能名，按下列条件自行分级）：
+入口路由同时完成唯一一次并行判断。只有以下条件同时满足时，才使用 `subagent-fanout-delivery`（分级与任务卡规则见其 `references/overlap-classification.md`）：
 
 - 至少两个可独立推进的工作包；
 - 预计节省的时间或上下文明显大于派发、等待和集成成本；
 - 文件、资源和契约边界可隔离。
 
-工作包数量本身不构成并行理由；收益不足时主 Agent 串行处理。无法证明可隔离时串行。确定并行后才做分级和任务卡（Hermes 侧即 `subagent-fanout-delivery` 的 R1/R2/R3；Codex 侧按同一规则手工分级）；正式计划只记录该路由结果，不再次判断。最终计划、共享契约、最终写入、集成和验证仍由主 Agent 保留。
+工作包数量本身不构成并行理由；收益不足时主 Agent 串行处理。无法证明可隔离时串行。确定并行后才由 `subagent-fanout-delivery` 分级和生成任务卡（R1/R2/R3）；正式计划只记录该路由结果，不再次判断。最终计划、共享契约、最终写入、集成和验证仍由主 Agent 保留。
 
 ## 平台适配
 
