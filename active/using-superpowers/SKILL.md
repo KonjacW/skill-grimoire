@@ -24,7 +24,7 @@ metadata:
 
 ## 一次并行判断
 
-入口路由同时完成唯一一次并行判断。只有以下条件同时满足时，才使用 `subagent-fanout-delivery`（分级与任务卡规则见其 `references/overlap-classification.md`）：
+入口路由同时完成唯一一次并行判断。只有以下条件同时满足时，才使用 `subagent-fanout-delivery`（分级与任务卡规则见 `subagent-fanout-delivery/references/overlap-classification.md`）：
 
 - 至少两个可独立推进的工作包；
 - 预计节省的时间或上下文明显大于派发、等待和集成成本；
