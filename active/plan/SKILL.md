@@ -5,7 +5,7 @@ license: MIT
 metadata:
   agent:
     tags: [planning, plan-mode, implementation, workflow, design, documentation]
-    related_skills: [test-driven-development, pre-commit-verification]
+    related_skills: [pre-commit-verification]
 ---
 
 # Plan Mode
@@ -44,7 +44,7 @@ Save the plan with `write_file` under:
 
 Treat that as relative to the active working directory / backend workspace. file tools are workspace-aware, so using this relative path keeps the plan with the workspace on local, docker, ssh, modal, and daytona backends.
 
-> 计划目录：`docs/plans/`。
+> 计划目录按工作区约定：默认 `docs/plans/`；若本工作区另有约定（例如 `docs/plans/`），按该约定写入。
 
 If the runtime provides a specific target path, use that exact path.
 If not, create a sensible timestamped filename yourself under `docs/plans/`.
@@ -278,7 +278,10 @@ Every task that produces code should include the full TDD cycle:
 3. Write minimal code
 4. Run to verify pass
 
-See `test-driven-development` skill for details.
+Binding rules for that cycle (stated here so this file stands alone):
+- Never write production code before a test exists that fails for the missing behavior.
+- Write only the minimal code that turns the failing test green; no speculative extras.
+- If the new test passes on its first run, it isn't yet exercising the new behavior — fix the test before continuing.
 
 ### Frequent Commits
 

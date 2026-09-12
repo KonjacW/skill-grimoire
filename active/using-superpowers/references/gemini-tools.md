@@ -31,12 +31,12 @@ User-level skills live at **`~/.gemini/skills/`**, with **`~/.agents/skills/`** 
 
 Gemini CLI dispatches subagents through the `invoke_agent` tool, which takes `agent_name` and `prompt` parameters. The same dispatch is also surfaced as a chat-syntax shortcut: typing `@generalist <prompt>` is equivalent to calling `invoke_agent` with `agent_name: "generalist"`. Built-in agent names include `generalist`, `cli_help`, `codebase_investigator`, and (with browser tooling enabled) `browser_agent`.
 
-Skills dispatch with `Subagent (generic):` and either reference a prompt-template file (e.g., `requesting-code-review`'s `./code-reviewer.md`) or supply an inline prompt. On Gemini CLI:
+Skills dispatch with `Subagent (generic):` and either reference a prompt-template file (e.g. a `*-prompt.md` / `code-reviewer.md` shipped in the calling skill's own directory) or supply an inline prompt. On Gemini CLI:
 
 | Skill dispatch form | Gemini CLI equivalent |
 |---------------------|----------------------|
 | References a `*-prompt.md` template (implementer, task-reviewer, code-reviewer, etc.) | Fill the template, then `invoke_agent` with `agent_name: "generalist"` and the filled prompt |
-| References `requesting-code-review`'s `./code-reviewer.md` | `invoke_agent` with `agent_name: "generalist"` and the filled review template |
+| References a review-prompt template (a file asking for severity + `file:line` + expected behavior per finding) | `invoke_agent` with `agent_name: "generalist"` and the filled review template |
 | Inline prompt (no template referenced) | `invoke_agent` with `agent_name: "generalist"` and your inline prompt |
 
 ### Prompt filling

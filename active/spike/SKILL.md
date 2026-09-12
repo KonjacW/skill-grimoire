@@ -5,7 +5,7 @@ license: MIT
 metadata:
   agent:
     tags: [spike, prototype, experiment, feasibility, throwaway, exploration, research, planning, mvp, proof-of-concept]
-    related_skills: [sketch]
+    related_skills: []
 ---
 
 # Spike

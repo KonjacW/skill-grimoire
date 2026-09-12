@@ -5,7 +5,7 @@ license: MIT
 metadata:
   agent:
     tags: [code-review, security, verification, quality, pre-commit, auto-fix]
-    related_skills: [test-driven-development, github]
+    related_skills: []
 ---
 
 # Pre-Commit Code Verification
@@ -28,8 +28,9 @@ quality gates, an independent reviewer subagent, and an auto-fix loop.
 
 **Push gate (repo + behavior-changing diff):** before any push, the final *integrated* diff must pass an independent read-only review with its blocking/important findings closed and the fix re-checked — see the `review-gate` skill (Codex side runs it via `.system/review-agent`). This pipeline verifies *your* changes before commit; the gate decides whether push may happen at all. Exceptions (formal review skippable, verification still required): pure docs/comments/formatting, investigation-only plans with no code or config diff, tiny no-behavior-change edits.
 
-**This skill vs github:** This skill verifies YOUR changes before committing.
-`github` reviews OTHER people's PRs on GitHub with inline comments.
+**Scope:** This skill verifies **your own** changes before they are committed — it does not
+review someone else's pull request. Reviewing another author's PR (diff comments on a
+hosted review page) is a different task and is out of scope here.
 
 ## Step 1 — Get the diff
 
@@ -263,8 +264,9 @@ element.textContent = userInput;
 
 **review-gate:** 有仓库行为变更时 push 前必须过关；本技能负责执行侧。
 
-**test-driven-development:** This pipeline verifies TDD discipline was followed —
-tests exist, tests pass, no regressions.
+**TDD discipline (rule stated inline, no external skill needed):** this pipeline verifies
+that tests were written with the code rather than after it — tests exist for the new
+behavior, they pass, and there are no regressions against the baseline.
 
 **plan:** Validates implementation matches the plan requirements.
 

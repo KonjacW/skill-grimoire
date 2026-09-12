@@ -4,8 +4,8 @@
 
 > *grimoire* ＝ 魔导书：把技能收进一本随时可翻阅、维护、增补的书。
 
-八个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
-它们不绑定具体项目、不含可执行代码、不依赖第三方库，装进你的 Codex 就能用。
+九个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
+它们不绑定具体项目、不依赖第三方库；技能以文本为主，只有 `long-running-progress-monitoring` 带两个 PowerShell 脚本（`active/long-running-progress-monitoring/scripts/`），装进你的 Codex 就能用。
 
 ## 工作流全景
 
@@ -53,6 +53,7 @@
 | `review-gate` | **push 前门禁**：独立只读 Review，风险三档、finding 严重性三档、修复后复核 | 有仓库行为变更、准备 push |
 | `finishing-a-development-branch` | **收尾**：验证测试 → 摆出集成选项（本地合并 / PR / 保持）→ 清理 | 分支工作结束、由你决定怎么落地 |
 | `agent-handover-prompts` | **交接**：任务卡交接 vs 进展交底，结论四层可信度 + 机检清单 | 换会话、交给无记忆的下一 agent |
+| `long-running-progress-monitoring` | **长任务进度监控**：description 原文「Use to monitor long-running training or batch jobs.」；含自带脚本与文档化内联降级 | 长跑训练 / 批处理作业需要看进度时 |
 
 ## 安装
 
@@ -65,7 +66,8 @@ cp -r skill-grimoire/active/* ~/.codex/skills/active/
 Windows PowerShell：
 
 ```powershell
-git clone https://github.com/KonjacW/skill-grimoire.git
+$repo = "https://github.com/KonjacW/skill-grimoire.git"
+git clone $repo
 New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills\active" | Out-Null
 Copy-Item -Recurse .\skill-grimoire\active\* "$env:USERPROFILE\.codex\skills\active\"
 ```
@@ -92,8 +94,21 @@ Copy-Item -Recurse .\skill-grimoire\active\* "$env:USERPROFILE\.codex\skills\act
 ```
 active/<skill>/SKILL.md        技能本体（每个技能一个目录）
 active/<skill>/references/     按需加载的细则（分级表、模板、门禁提示模板等）
+active/<skill>/scripts/        个别技能自带的可执行辅助脚本（如长任务监控的 PowerShell 脚本）
 scripts/publish.py             维护者用：重建本仓库（宿主中立化 + 脱敏 + fail-closed 门禁）
 ```
+
+## 占位符说明
+
+发布副本里会出现少量尖括号占位符，它们是**脱敏流程把私人路径替换掉之后的产物**，不是让你照抄的字面值——读到就代入你自己的本机路径：
+
+| 占位符 | 含义 |
+|---|---|
+| `<PROJECT_DIR>` | 宿主项目根目录（示例脚本里用来指向产物目录） |
+| `<NOTE_VAULT>` | 笔记库根目录 |
+| `<OBSIDIAN_VAULT>` | Obsidian 仓库根目录 |
+
+后两个由发布流程在命中私人笔记路径时写入；技能正文里若出现其它打尖括号的写法（`<path-to>`、`<skill>`、`<编号>` 之类），那是文档占位符，按上下文理解即可。全树自扫命令见 `ROADMAP.md` §5。
 
 ## 说明与依赖
 
@@ -102,6 +117,7 @@ scripts/publish.py             维护者用：重建本仓库（宿主中立化 
 - `pre-commit-verification` 与 `spike` 里出现 `spawn_subagent` 时，指的是**宿主提供的子代理派发工具**——换成你自己宿主的工具名即可（Codex 里就是它自带的 agent 工具）。
 - `plan` 默认把计划写到工作区内的 `docs/plans/`。
 - `spike` 若检测到你装了上游的全量 GSD 系统（`gsd-spike` 同族技能），会建议改用那套；没有就用本技能这个轻量版。
+- `long-running-progress-monitoring` 的监控脚本是 PowerShell（Windows）；在能力不可用的宿主上按技能正文的降级说明做文档化内联轮询。
 - 技能正文以中文为主（部分技能为英文）。
 
 ## 许可与致谢
