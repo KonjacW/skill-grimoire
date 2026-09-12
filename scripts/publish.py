@@ -14,7 +14,7 @@
 - 幂等、fail-closed：命中门禁规则即非零退出，阻止推送。
 """
 from __future__ import annotations
-import os, re, shutil, sys
+import os, re, shutil, sys, json
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CODEX = "C:/Users/KonjacW/.codex/skills"
@@ -69,6 +69,8 @@ REPLACEMENTS = [
     ("npx get-shit-done-cc --hermes", "npx get-shit-done-cc"),
     ("**For Hermes:**", "**执行提示：**"),
     ("（Hermes 读不到", "（子代理读不到"),
+    # 发布副本里全部路径已被替换成 docs/plans/，这行注解在此语境下会自相矛盾（暗示 Hermes 用别的目录）
+    ("> 非 Hermes 宿主（Codex 等）：计划目录改用 `docs/plans/`。", "> 计划目录：`docs/plans/`。"),
 ]
 
 # 3) 正则替换：markdown 链接若指向本机绝对路径，改用链接文本里已有的相对路径
@@ -77,13 +79,8 @@ REGEX_RULES = [
      lambda m: f"[{m.group(1)}]({m.group(1)})" if re.match(r"^(\.\.?/|[A-Za-z0-9_.-]+/)", m.group(1)) else m.group(0)),
 ]
 
-# 4) 整行重写：移除含私人项目名的样本行
-LINE_RULES = [
-    ("active/agent-handover-prompts/SKILL.md", r"REDACTED|REDACTED",
-     "- 规范样本（12 节结构 + 数字附录 + 自检命令）：见你本地项目的 `docs/*/*_handover_YYYYMMDD.md`（数字附录唯一规格源的写法）。"),
-    ("active/agent-handover-prompts/SKILL.md", r"REDACTED",
-     "- 前端/单机调试型交接变体（任务清单 A-F + 测试坑清单 + 不要做的事）：见你本地前端项目的 `docs/debug/*handoff*.md`。"),
-]
+# 4) 整行重写：移除含私人项目名的样本行。
+#    规则本身（匹配式 + 替换文本）就带私人信息，故整表落在本机私有表里，见 load_line_rules()。
 
 # 5) 在 H1 之后插入一行说明（每文件最多一次）
 INSERT_AFTER_H1 = {
@@ -92,18 +89,58 @@ INSERT_AFTER_H1 = {
 }
 
 # 6) 门禁扫描（命中即失败）
-SCAN = {
-    "私人项目名":     re.compile(r"REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED|REDACTED", re.I),
-    "私人路径":       re.compile(r"REDACTED|REDACTED|" + re.escape("REDACTED") + r"|REDACTED|REDACTED", re.I),
+# 通用规则不含任何私人信息，直接内置；含私人信息的四类从**本机私有表**读取——
+# 该表被 .gitignore 忽略，不随公开仓发布（否则「脱敏词表」本身就成了私人信息泄露）。
+SCAN_GENERIC = {
     "本机绝对路径":   re.compile(r"[A-Za-z]:[\\/]{1,2}Users[\\/]"),
-    "实名":           re.compile(r"REDACTED|REDACTED"),
     "疑似密钥":       re.compile(r"sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{20,}|Bearer [A-Za-z0-9._-]{20,}"),
-    "服务器凭据":     re.compile(r"REDACTED|REDACTED"),
     "宿主专有工具":   re.compile(r"delegate_task|\.hermes/"),
     "非法 frontmatter": re.compile(r"^(version|author|platforms|dependencies):"),
     "宿主元数据键":   re.compile(r"^\s+hermes:\s*$"),
     "CRLF 行尾":      re.compile(r"\r$"),
 }
+SENSITIVE_CATEGORIES = {"私人项目名": re.I, "私人路径": re.I, "实名": 0, "服务器凭据": 0}
+LOCAL_REDACT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "redact-patterns.local.json")
+
+
+def load_sensitive():
+    """读本机私有脱敏表。缺文件 / 缺类别 / 解析失败一律返回 None（fail-closed）。"""
+    if not os.path.isfile(LOCAL_REDACT):
+        print(f"✗ 缺少本机私有脱敏表：{LOCAL_REDACT}")
+        return None
+    try:
+        data = json.load(open(LOCAL_REDACT, encoding="utf-8"))
+    except Exception as e:
+        print(f"✗ 脱敏表无法解析：{e}")
+        return None
+    out = {}
+    for cat, flags in SENSITIVE_CATEGORIES.items():
+        pats = data.get(cat)
+        if not pats:
+            print(f"✗ 脱敏表缺类别：{cat}（不允许留空，否则该类形同未脱敏）")
+            return None
+        out[cat] = re.compile("|".join(pats), flags)
+    if not data.get("line_rules"):
+        print("✗ 脱敏表缺 line_rules（整行重写规则；留空会让私人样本行被原样发布）")
+        return None
+    return out
+
+
+def load_line_rules():
+    """整行重写规则：[(相对路径, 已编译正则, 替换整行文本)]，全部来自本机私有表。"""
+    data = json.load(open(LOCAL_REDACT, encoding="utf-8"))
+    return [(rel, re.compile(pat, re.I), rep) for rel, pat, rep in data["line_rules"]]
+
+
+def scan_rules():
+    """通用规则 + 私有规则。私有表不可用时返回 None，调用方须按 fail-closed 处理。"""
+    sens = load_sensitive()
+    if sens is None:
+        return None
+    rules = dict(SCAN_GENERIC)
+    rules.update(sens)
+    return rules
 
 
 def iter_text_files(root: str):
@@ -188,11 +225,10 @@ def sync():
             log.append(f"归一 {rel}: frontmatter {n_fm} 项 / 正文 {n_txt} 处")
         if t != orig or t.encode("utf-8") != raw:
             open(p, "wb").write(t.encode("utf-8"))
-    for rel, pat, newline in LINE_RULES:
+    for rel, rx, newline in load_line_rules():
         p = os.path.join(REPO, rel)
         if not os.path.isfile(p):
             continue
-        rx = re.compile(pat, re.I)
         lines = open(p, encoding="utf-8").read().split("\n")
         hit = 0
         for i, l in enumerate(lines):
@@ -218,6 +254,10 @@ def sync():
 
 
 def check() -> int:
+    rules = scan_rules()
+    if rules is None:
+        print("✗ 门禁未能运行（私有脱敏表不可用）→ 按 fail-closed 处理，禁止推送。")
+        return 1
     bad = []
     for p in iter_text_files(REPO):
         rel = os.path.relpath(p, REPO).replace("\\", "/")
@@ -227,7 +267,7 @@ def check() -> int:
         if enc != "utf-8":
             bad.append(f"非 UTF-8({enc}) | {rel}")
         for i, l in enumerate(t.split("\n"), 1):
-            for cat, rx in SCAN.items():
+            for cat, rx in rules.items():
                 if rx.search(l):
                     bad.append(f"{cat} | {rel}:{i}")
     if bad:

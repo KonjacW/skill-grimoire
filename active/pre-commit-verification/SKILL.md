@@ -284,4 +284,4 @@ tests exist, tests pass, no regressions.
 ## 归属
 
 Adapted from [obra/superpowers](https://github.com/obra/superpowers) (MIT) 与 MorAlekss 的 pre-commit review 工作流。
-本技能由 Hermes Agent 维护；`version: 2.0.0` 之前的版本信息保留在此处。
+本技能由 Hermes Agent 维护。

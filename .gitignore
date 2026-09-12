@@ -1,0 +1,7 @@
+# 本机私有脱敏规则表：含私人项目名 / 私人路径 / 实名 / 服务器凭据 + 整行重写规则。
+# 只存在于本机，**永不发布**；publish.py 找不到它会 fail-closed 拒绝运行。
+scripts/redact-patterns.local.json
+
+# Python 字节码缓存（自动生成，不入库）
+__pycache__/
+*.pyc
