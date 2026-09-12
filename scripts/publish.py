@@ -284,18 +284,23 @@ def check_line_rule_collapse():
     会被误判成塌缩——实测本例：private 表新增的首条规则先把 live:69 改写掉，后续那条通用规则
     实际只剩 live:80 一行可命中，独立扫描却会看到 69/80 两行而假报。
     """
-    bad, warn = [], []
+    bad = []
     by_rel = {}
     for rel, rx, rep in load_line_rules():          # 保持表内顺序
         by_rel.setdefault(rel.replace("\\", "/"), []).append((rx, rep))
     for rel, rules in by_rel.items():
         src = live_source_file(rel)
         if not src or not os.path.isfile(src):
-            warn.append(f"整行规则的目标文件解析不到，未参与检查 | {rel}")
+            # 必须是 ERROR 而不是告警：目标文件解析不到时，这条规则在真实发布里同样不生效
+            # （transform_text 按同一 rel 键取用），结果是本该被整行重写掉的私人文本静默进发布区，
+            # 而 check_publish_sync 比的是同一份有缺陷的变换、也不会报。本文件里其余表错误
+            # （缺表/类别留空/非法正则）全是 exit 1，唯独这个「会静默漏脱敏」的形态不能只告警。
+            bad.append(f"整行规则的目标文件解析不到（写错路径或技能已改名/移除）| {rel}")
             continue
         lines = (open(src, encoding="utf-8", errors="replace").read()
                  .replace("\r\n", "\n").split("\n"))
         per_const = {}                              # 常量替换文本 → [(规则序号, 行号, 去空白原文)]
+        single_reported = set()                     # 已被单规则判据报过的常量，避免同一次违规报两遍
         for k, (rx, rep) in enumerate(rules):
             hit = [(i + 1, lines[i]) for i in range(len(lines)) if rx.search(lines[i])]
             if not hit:
@@ -305,6 +310,7 @@ def check_line_rule_collapse():
                 shown = ", ".join(str(i) for i, _ in hit[:8]) + ("..." if len(hit) > 8 else "")
                 bad.append(f"整行重写会丢内容 | {rel} (live 行 {shown}; 命中 {len(hit)} 行 / "
                            f"去重 {len(distinct)} 种内容，替换为常量)")
+                single_reported.add(rep)
             if not BACKREF.search(rep):
                 for i, c in hit:
                     per_const.setdefault(rep, []).append((k, i, c.strip()))
@@ -313,12 +319,12 @@ def check_line_rule_collapse():
         # 跨规则塌缩：不同规则把内容互不相同的行改成同一句常量。G10 的实际形态正是这一类——
         # 单看每条规则各命中 1 行时（如一条吃第 69 行、另一条吃第 80 行）单条判据不会暴露。
         for rep, got in per_const.items():
+            if rep in single_reported:
+                continue
             if len({k for k, _, _ in got}) >= 2 and len({c for _, _, c in got}) >= 2:
                 pos = ", ".join(f"规则{k + 1}:行{i}" for k, i, _ in got[:8])
                 bad.append(f"多规则把不同内容改成同一常量 | {rel} ({pos}；共 {len(got)} 处 / "
                            f"{len({c for _, _, c in got})} 种原内容 → 同一句)")
-    for w in warn:
-        print("  ⚠", w)
     return bad
 
 
