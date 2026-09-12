@@ -80,6 +80,7 @@ REGEX_RULES = [
 INSERT_AFTER_H1 = {
     "active/pre-commit-verification/SKILL.md": "> 文中的 `spawn_subagent` 指**宿主提供的子代理派发工具**——换成你自己宿主的工具名即可。\n",
     "active/spike/SKILL.md": "> 文中的 `spawn_subagent` 指**宿主提供的子代理派发工具**——换成你自己宿主的工具名即可。\n",
+    "active/subagent-fanout-delivery/references/overlap-classification.md": "> 文中的 `spawn_subagent`（含控制动作 `action='stop'`）指**宿主提供的子代理工具**——换成你自己宿主的工具名即可。\n",
 }
 
 # 6) 门禁扫描（命中即失败）
