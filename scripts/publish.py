@@ -459,12 +459,74 @@ def _declared_skill_count(text: str):
     只查第一处也不行：改了「最后核对」行之后，后文里留着旧数字的声明会被漏掉（实测假阴性）。
     """
     nums, unknown = set(), set()
-    for x in re.findall(r"([一二三四五六七八九十]{1,2})个技能", text):
-        if x in CN_NUM:
+    for x in re.findall(r"(\d+|[一二三四五六七八九十]{1,2})个技能", text):
+        if x.isdigit():                 # 阿拉伯数字写法也接受（否则修法建议与判据自相矛盾）
+            nums.add(int(x))
+        elif x in CN_NUM:
             nums.add(CN_NUM[x])
         else:
             unknown.add(x)
     return nums, unknown
+
+
+def _strip_comment(s: str) -> str:
+    """剥掉 YAML 里引号外的行尾注释（`beta  # 注释` → `beta`）。"""
+    out, quote = [], None
+    for i, c in enumerate(s):
+        if quote:
+            if c == quote:
+                quote = None
+            out.append(c)
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+        elif c == "#" and (i == 0 or s[i - 1].isspace()):
+            break
+        else:
+            out.append(c)
+    return "".join(out).rstrip()
+
+
+def _related_skill_names(text: str) -> set:
+    """从 **frontmatter** 里取 `related_skills` 的名字集合（不扫正文）。
+
+    支持：行内 `[a, b]`（含跨行 flow 写法）与块式（`- a` / `  - a`）。
+    第二轮 Review 抓出的四个缺陷，全部已修（每条都有实跑证据）：
+      · 只扫全文 → 正文散文里的 `related_skills:` 被当声明 → 先切出 frontmatter 段；
+      · 块式遇空行/注释行即 break → 会**静默漏掉**后面的名字（fail-open）→ 现在跳过再继续；
+      · 行尾注释被吞进名字（`[beta]  # 注释` → `beta]  # 注释`）→ 合法文件被误报 → 现在剥注释；
+      · 跨行 flow 写法 `[a,\\n b]` 整表丢失 → 现在一直收集到 `]`。
+    已知限制：不处理 YAML 折叠/多行字符串与键名大小写变体（本仓不出现；要完备就得引 yaml，而本脚本刻意零依赖）。
+    """
+    m = re.match(r"^---\s*\n(.*?)\n---\s*\n", text, re.S)
+    fm = m.group(1) if m else text.split("\n\n")[0]
+    out, lines = set(), fm.split("\n")
+    for i, l in enumerate(lines):
+        mm = re.search(r"related_skills\s*:\s*(.*)$", l)
+        if not mm:
+            continue
+        rest = mm.group(1).strip()
+        items: list = []
+        if rest.startswith("["):
+            buf, j = rest, i
+            while "]" not in buf and j + 1 < len(lines):
+                j += 1
+                buf += " " + lines[j]
+            if "]" in buf:
+                items = buf[buf.find("[") + 1:buf.rfind("]")].split(",")
+        else:
+            for nxt in lines[i + 1:]:
+                if not nxt.strip() or nxt.strip().startswith("#"):
+                    continue                      # 空行/注释不终止列表
+                bm = re.match(r"^\s*-\s*(.+?)\s*$", nxt)
+                if not bm:
+                    break
+                items.append(bm.group(1))
+        for x in items:
+            nm = _strip_comment(x).strip().strip("'\"").strip()
+            if nm:
+                out.add(nm)
+    return out
 
 
 def check_doc_consistency():
@@ -488,18 +550,25 @@ def check_doc_consistency():
 
     rp = os.path.join(REPO, "README.md")
     readme = open(rp, encoding="utf-8", errors="replace").read() if os.path.isfile(rp) else ""
-    seg = re.search(r"^## 技能一览(.*?)^## ", readme, re.S | re.M)
-    n_rows = len(re.findall(r"^\| `", seg.group(1), re.M)) if seg else -1
+    seg = re.search(r"^## 技能一览(.*?)(?:^## |\Z)", readme, re.S | re.M)
+    if seg is None:
+        bad.append("文档计数不一致 | README 里找不到「## 技能一览」小节（无法比对技能清单）")
+        n_rows, tbl_names = None, set()
+    else:
+        n_rows = len(re.findall(r"^\| `", seg.group(1), re.M))
+        tbl_names = {m.group(1).strip() for m in re.finditer(r"^\| `([^`]+)`", seg.group(1), re.M)}
     decl, decl_unknown = _declared_skill_count(readme)
 
     gp = os.path.join(REPO, "ROADMAP.md")
     road = open(gp, encoding="utf-8", errors="replace").read() if os.path.isfile(gp) else ""
     road_nums = {int(x) for x in re.findall(r"包内\s*(\d+)\s*个技能", road)}
 
-    if n_rows != n_dirs:
+    if n_rows is not None and n_rows != n_dirs:
         bad.append(f"文档计数不一致 | README「技能一览」表 {n_rows} 行 vs active/ 实际 {n_dirs} 个技能")
     if not decl and not decl_unknown:
-        bad.append("文档计数不一致 | README 正文找不到「N 个技能」声明")
+        bad.append("文档计数不一致 | README 正文找不到「N 个技能」声明"
+                   "（接受的写法：数字紧接「个技能」，如「十个技能」；数字与「个技能」之间**不要留空格**，"
+                   "否则会被当成叙述句而不是声明）")
     for u in sorted(decl_unknown):
         bad.append(f"文档计数不一致 | README 出现无法解析的技能数写法「{u}个技能」"
                    f"（CN_NUM 只覆盖一至十二；请改用阿拉伯数字写法或补映射）")
@@ -511,7 +580,15 @@ def check_doc_consistency():
         bad.append(f"文档计数不一致 | ROADMAP 声明 {d} 个技能 vs active/ 实际 {n_dirs} 个"
                    f"（叙述性引用旧计数请写成 N={d}，不要复述声明句式，否则本门禁会把它一并拦下）")
 
+    if len(SOURCES) != n_dirs:
+        bad.append(f"文档计数不一致 | publish.py 的 SOURCES 白名单 {len(SOURCES)} 条 vs active/ 实际 {n_dirs} 个技能")
     pkg = {d for d in os.listdir(act) if os.path.isdir(os.path.join(act, d))} if os.path.isdir(act) else set()
+    # 只比行数不够：表里把技能名写错一个字母时行数不变（G5 的残余漂移通道）。名字必须逐字一致。
+    if seg is not None:                     # 小节缺失时上面已单独报过，不再逐条刷「表缺 X」噪声
+        for nm in sorted(pkg - tbl_names):
+            bad.append(f"文档计数不一致 | README「技能一览」表缺 {nm}（active/ 里有它）")
+        for nm in sorted(tbl_names - pkg):
+            bad.append(f"文档计数不一致 | README「技能一览」表多出 {nm}（active/ 里没有它；名字要逐字一致）")
     for sk in sorted(pkg):
         for r, _, fs in os.walk(os.path.join(act, sk)):
             for f in fs:
@@ -519,8 +596,7 @@ def check_doc_consistency():
                     continue
                 t = open(os.path.join(r, f), encoding="utf-8", errors="ignore").read()
                 names = set(re.findall(r"`([a-z0-9][a-z0-9-]{2,})/(?:references|scripts|templates|assets)/", t))
-                names |= {x.strip() for mm in re.findall(r"related_skills:\s*\[([^\]]*)\]", t)
-                          for x in mm.split(",") if x.strip()}
+                names |= _related_skill_names(t)
                 for n in sorted(names):
                     if n == sk or n in pkg or n in KNOWN_EXTERNAL_REFS:
                         continue

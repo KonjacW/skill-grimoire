@@ -391,8 +391,11 @@ class PublishGateTests(_Base):
     # 下游 `sorted(...)` 里 int/None 混排 → TypeError，把门禁的可用报错降级成裸 traceback。
     def test_T14_unmappable_cn_numeral_reports_instead_of_crashing(self):
         self.build()
+        # 夹具必须**同时**含「一个可解析 + 一个不可解析」的声明：这才是当初崩掉的形态——
+        # 只有一个不可解析声明时不会走到 int/None 混排的排序分支，用例会假绿。
         self.write(os.path.join(self.repo, "README.md"),
-                   self.readme_text(self.SKILLS).replace("本包共二个技能。", "本包共十九个技能。"))
+                   self.readme_text(self.SKILLS).replace(
+                       "本包共二个技能。", "本包共二个技能。\n\n（旧版曾写作十九个技能。）"))
         got = self.pub.check_doc_consistency()          # 不得抛异常
         self.assertTrue(any("无法解析" in b for b in got), got)
 
@@ -414,6 +417,104 @@ class PublishGateTests(_Base):
                    self.skill_text("alpha", body="参见 (superpowers:writing-skills) 的写法。\n"))
         got = self.pub.check_doc_consistency()
         self.assertTrue(any("外包装指针" in b for b in got), got)
+
+
+    # —— T17：README 侧的**第二处**陈旧声明也必须被抓到（T15 只护住了 ROADMAP 侧）——
+    # 回归：把 README 的「遍历全部声明」改回只取第一处时，本用例必须变红。
+    # ⚠ 夹具两条声明都必须是**紧接写法**（数字与「个技能」之间不留空格）——第一版夹具写成
+    #   「本包共 2 个技能。」，那个声明根本没被正则匹配上 → 用例在变异下仍绿（空转），被第二轮 Review 抓出。
+    def test_T17_stale_second_readme_declaration_is_caught(self):
+        self.build()
+        self.write(os.path.join(self.repo, "README.md"),
+                   "本包共二个技能。\n\n## 技能一览\n\n| 技能 | 说明 |\n|---|---|\n"
+                   "| `alpha` | 说明 0 |\n| `beta` | 说明 1 |\n\n## 安装\n\n"
+                   "\u65e7版说明：本包共九个技能。\n")
+        got = self.pub.check_doc_consistency()
+        self.assertTrue(any("README 正文声明 9 个技能" in b for b in got), got)
+
+    # —— T20：带空格的叙述句**不得**被当成声明（防误报护栏）——
+    # 判据是指「数字紧接『个技能』」；把这一点放宽会让「这 29 个技能里…」这类正常行变成假声明。
+    def test_T20_prose_with_space_is_not_a_declaration(self):
+        self.build()
+        self.write(os.path.join(self.repo, "README.md"),
+                   "本包共二个技能。\n\n## 技能一览\n\n| 技能 | 说明 |\n|---|---|\n"
+                   "| `alpha` | 说明 0 |\n| `beta` | 说明 1 |\n\n## 安装\n\n"
+                   "注意：这 29 个技能里有一半从没被读过。\n")
+        self.assertEqual(self.pub.check_doc_consistency(), [])
+
+    # —— T21：阿拉伯数字声明必须被接受（否则门禁的修法建议与判据自相矛盾）——
+    def test_T21_arabic_digit_declaration_is_accepted(self):
+        self.build()
+        self.write(os.path.join(self.repo, "README.md"),
+                   "本包共2个技能。\n\n## 技能一览\n\n| 技能 | 说明 |\n|---|---|\n"
+                   "| `alpha` | 说明 0 |\n| `beta` | 说明 1 |\n\n## 安装\n\n略。\n")
+        self.assertEqual(self.pub.check_doc_consistency(), [])
+
+    # —— T22：缺「技能一览」小节只报一条；小节在文末不得被判为缺失 ——
+    def test_T22_missing_section_reports_once_and_eof_section_is_ok(self):
+        self.build()
+        self.write(os.path.join(self.repo, "README.md"), "本包共二个技能。\n\n## 安装\n\n略。\n")
+        got = self.pub.check_doc_consistency()
+        self.assertTrue(any("找不到「## 技能一览」小节" in b for b in got), got)
+        self.assertFalse(any("表缺" in b for b in got), "小节缺失时不该逐技能刷噪声")
+        self.write(os.path.join(self.repo, "README.md"),
+                   "本包共二个技能。\n\n## 技能一览\n\n| 技能 | 说明 |\n|---|---|\n"
+                   "| `alpha` | 说明 0 |\n| `beta` | 说明 1 |\n")
+        self.assertFalse(any("找不到" in b for b in self.pub.check_doc_consistency()))
+
+    # —— T23：related_skills 的四种写法（第二轮 Review 抓出的 fail-open 与误报面）——
+    def test_T23_related_skills_forms_are_parsed_correctly(self):
+        self.build()
+        path = os.path.join(self.repo, "active", "alpha", "SKILL.md")
+        # (a) 块式列表里有空行 + 注释行：后面的悬空名不能漏（否则 = fail-open）
+        self.write(path, self.skill_text("alpha").replace(
+            "related_skills: []", "related_skills:\n  - beta\n\n  # 注释行\n  - ghost-zzz"))
+        self.assertTrue(any("ghost-zzz" in b for b in self.pub.check_doc_consistency()))
+        # (b) 行尾注释不得被吞进名字（否则合法文件被误报 ERROR）
+        self.write(path, self.skill_text("alpha").replace(
+            "related_skills: []", "related_skills: [beta]  # 只要包内的"))
+        self.assertEqual(self.pub.check_doc_consistency(), [])
+        # (c) 跨行 flow 写法：折行里的悬空名不能丢
+        self.write(path, self.skill_text("alpha").replace(
+            "related_skills: []", "related_skills: [beta,\n  ghost-zzz]"))
+        self.assertTrue(any("ghost-zzz" in b for b in self.pub.check_doc_consistency()))
+        # (d) 正文散文里的 related_skills: 不得当成 frontmatter 声明
+        self.write(path, self.skill_text("alpha", body="正文示例。\n\nrelated_skills:\n- ghost-zzz\n"))
+        self.assertEqual(self.pub.check_doc_consistency(), [])
+
+
+    # —— T18：表里把技能名写错一个字母，行数不变 → 必须靠名字集合比对抓到 ——
+    def test_T18_skill_name_typo_in_table_is_caught(self):
+        self.build()
+        self.write(os.path.join(self.repo, "README.md"),
+                   self.readme_text(self.SKILLS).replace("| `beta` |", "| `btea` |"))
+        joined = " | ".join(self.pub.check_doc_consistency())
+        self.assertIn("表缺 beta", joined)
+        self.assertIn("表多出 btea", joined)
+
+    # —— T19：related_skills 的引号与块式两种写法 ——
+    def test_T19_related_skills_quotes_and_block_style(self):
+        self.build()
+        # (a) 带引号的合法名字不得误报（否则合法写法会被当成悬空引用 ERROR）
+        self.write(os.path.join(self.repo, "active", "alpha", "SKILL.md"),
+                   self.skill_text("alpha").replace("related_skills: []",
+                                                    'related_skills: ["beta"]'))
+        self.assertEqual(self.pub.check_doc_consistency(), [])
+        # (b) 块式写法里的悬空引用必须报出（旧实现静默放行 = fail-open）
+        self.write(os.path.join(self.repo, "active", "alpha", "SKILL.md"),
+                   self.skill_text("alpha").replace("related_skills: []",
+                                                    "related_skills:\n  - beta\n  - ghost-zzz"))
+        got = self.pub.check_doc_consistency()
+        self.assertTrue(any("ghost-zzz" in b for b in got), got)
+
+
+    # —— T24：第五处计数（SOURCES 白名单条目数）也要在比对里 ——
+    def test_T24_sources_whitelist_count_is_compared(self):
+        self.build()
+        self.set_const("SOURCES", dict(list(self.pub.SOURCES.items())
+                                       + [("ghost-wl", os.path.join(self.live, "active", "ghost-wl"))]))
+        got = self.pub.check_doc_consistency()
+        self.assertTrue(any("SOURCES 白名单" in b for b in got), got)
 
 
 if __name__ == "__main__":
