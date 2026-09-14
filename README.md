@@ -130,7 +130,7 @@ active/<skill>/SKILL.md        技能本体（每个技能一个目录）
 active/<skill>/references/     按需加载的细则（分级表、模板、门禁提示模板等）
 active/<skill>/scripts/        个别技能自带的可执行辅助脚本（如长任务监控的 PowerShell 脚本）
 scripts/publish.py             维护者用：重建本仓库（宿主中立化 + 脱敏 + fail-closed 门禁）
-scripts/test_publish.py        维护者用：上面那个门禁的标准库测试（24 个用例，纯标准库、零依赖）
+scripts/test_publish.py        维护者用：上面那个门禁的标准库测试（27 个用例，纯标准库、零依赖）
 ```
 
 维护者自检：在仓库根跑 `python scripts/test_publish.py -v`（或 `python -m unittest discover -s scripts -p "test_*.py"`）。

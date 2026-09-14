@@ -23,8 +23,12 @@ from __future__ import annotations
 import os, re, shutil, sys, json
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CODEX = "C:/Users/KonjacW/.codex/skills"
-HERMES = "C:/Users/KonjacW/AppData/Local/hermes/skills"
+# 本机路径一律从环境推导：本脚本随公开仓发布，不得硬编码维护者的用户名与目录
+# （维护者侧曾把盘符 + 用户目录写成字面量，随公开仓一路发布——ROADMAP G11 的残余形态）。
+_HOME = os.path.expanduser("~").replace("\\", "/")
+_LOCALAPPDATA = os.environ.get("LOCALAPPDATA", f"{_HOME}/AppData/Local").replace("\\", "/")
+CODEX = f"{_HOME}/.codex/skills"
+HERMES = f"{_LOCALAPPDATA}/hermes/skills"
 
 # 白名单：发布哪些技能，以及它们的源目录（唯一权威副本 = CODEX/active）
 SOURCES = {
@@ -56,21 +60,40 @@ FRONTMATTER_STRIP = ("version:", "author:", "platforms:", "dependencies:")
 FRONTMATTER_KEY_RENAME = [("  hermes:", "  agent:")]   # metadata 下的宿主命名空间
 
 # —— 2) 逐字替换（长模式在前）——
+
+
+def _win_spellings(prefix: str):
+    """同一 Windows 路径的几种字面写法：四 / 双 / 单反斜杠 + 正斜杠。
+
+    四反斜杠那种出现在「被转义过两层的文本」里（例如技能正文里引用的 JSON 片段）。
+    **必须先归一到正斜杠再展开**：传进来的前缀本身已是反斜杠形式，直接 `replace("/")` 是空操作，
+    实测会让 2/4 反斜杠两档整档消失（T4 用例抓到：三种写法只洗净了一种；仓内容零 diff 掩盖了它）。
+    """
+    base = prefix.replace(chr(92), "/")
+    return [base.replace("/", chr(92) * n) for n in (4, 2, 1)] + [base]
+
+
+def _home_path_pairs():
+    """本机路径 → 可移植占位符的替换对（长模式在前）。
+
+    路径从 HOME / LOCALAPPDATA 推导，不硬编码维护者用户名：克隆者跑同一脚本时替换的是
+    **他自己**的本机路径，行为与维护者侧一致；同时补上了原先缺的「单反斜杠」写法档。
+    """
+    win = _HOME.replace("/", '\\')
+    out = []
+    for prefix, portable in (
+        (win + '\\' + ".codex" + '\\' + "skills" + '\\' + "active", "~/.codex/skills/active"),
+        (win + '\\' + ".codex", "~/.codex"),
+        (win + '\\' + "AppData" + '\\' + "Local", "%LOCALAPPDATA%"),
+        (win, "~"),
+    ):
+        for s in _win_spellings(prefix):
+            out.append((s, portable))
+    return out
+
+
 REPLACEMENTS = [
-    # 私人库路径 → 占位符：这些原串本身含私人路径，已移入本机私有表，见 path_replacements()
-    # 本机绝对路径 → 可移植形式
-    (r"C:\\\\Users\\\\KonjacW\\\\.codex\\\\skills\\\\active", "~/.codex/skills/active"),
-    (r"C:\\Users\\KonjacW\\.codex\\skills\\active", "~/.codex/skills/active"),
-    ("C:/Users/KonjacW/.codex/skills/active", "~/.codex/skills/active"),
-    (r"C:\\\\Users\\\\KonjacW\\\\.codex", "~/.codex"),
-    (r"C:\\Users\\KonjacW\\.codex", "~/.codex"),
-    ("C:/Users/KonjacW/.codex", "~/.codex"),
-    (r"C:\\\\Users\\\\KonjacW\\\\AppData\\\\Local", "%LOCALAPPDATA%"),
-    (r"C:\\Users\\KonjacW\\AppData\\Local", "%LOCALAPPDATA%"),
-    ("C:/Users/KonjacW/AppData/Local", "%LOCALAPPDATA%"),
-    (r"C:\\\\Users\\\\KonjacW", "~"),
-    (r"C:\\Users\\KonjacW", "~"),
-    ("C:/Users/KonjacW", "~"),
+    *_home_path_pairs(),
     # 宿主专有写法 → 中立写法
     ("delegate_task", "spawn_subagent"),
     (".hermes/plans", "docs/plans"),
@@ -85,7 +108,8 @@ REPLACEMENTS = [
 
 # 3) 正则替换：markdown 链接若指向本机绝对路径，改用链接文本里已有的相对路径
 REGEX_RULES = [
-    (re.compile(r"\[([^\]]+)\]\((?:[A-Za-z]:[\\/]{1,2}Users[\\/]KonjacW[^)]*)\)"),
+    (re.compile(r"\[([^\]]+)\]\((?:[A-Za-z]:[\\/]{1,2}Users[\\/]"
+                + re.escape(os.path.basename(_HOME)) + r"[^)]*)\)"),
      lambda m: f"[{m.group(1)}]({m.group(1)})" if re.match(r"^(\.\.?/|[A-Za-z0-9_.-]+/)", m.group(1)) else m.group(0)),
 ]
 
@@ -612,6 +636,47 @@ def check_doc_consistency():
     return bad
 
 
+# O6 用的规则子集：只查「泄露类」。**不查「宿主专有工具」**——publish.py 的职责就是定义
+# delegate_task → spawn_subagent 这类替换与禁则，含那个名字是构造需要，不是泄露
+# （该规则仍照常覆盖 active/ 与仓根文档）。
+LEAK_CATEGORIES = ("本机绝对路径", "疑似密钥", "私人项目名", "私人路径", "实名", "服务器凭据")
+
+
+def check_scripts_leak():
+    """O6：仓根 scripts/ 的泄露面自检（ROADMAP G11 的残余形态）。
+
+    `iter_text_files(REPO)` 只跳过**仓根第一层**的 `.git/` 与 `scripts/`——后者是必需的，因为本机
+    私有脱敏表就放在那儿（门禁不能自扫自己的脱敏词表）。代价是 `scripts/` 下的脚本既不被脱敏、
+    也不被扫：实测 `publish.py` 把盘符与用户名写成字面量，随公开仓一路发布，而 `--check` 报「无私人路径」。
+
+    本检查把「泄露类」规则单独套到仓根 `scripts/` 的文本文件上：
+      · 私有脱敏表（`*.local.json` / LOCAL_REDACT 本身）豁免——它按设计装着私人词表，扫它必然自报；
+      · 不套「宿主专有工具」规则（理由见 LEAK_CATEGORIES 上方注释）。
+    """
+    rules = scan_rules()
+    if rules is None:
+        return ["门禁未能运行（私有脱敏表不可用）| scripts/ 泄露面自检"]
+    bad = []
+    root = os.path.join(REPO, "scripts")
+    if not os.path.isdir(root):
+        return bad
+    skip = os.path.abspath(LOCAL_REDACT)
+    for p in iter_text_files(root, skip_top=None):
+        if os.path.abspath(p) == skip or p.endswith(".local.json"):
+            continue
+        rel = os.path.relpath(p, REPO).replace("\\", "/")
+        t, _ = read_text(p, rel)
+        if t is None:
+            bad.append(f"未知编码 | {rel}")
+            continue
+        for i, l in enumerate(t.split("\n"), 1):
+            for cat in LEAK_CATEGORIES:
+                rx = rules.get(cat)
+                if rx is not None and rx.search(l):
+                    bad.append(f"{cat} | {rel}:{i}")
+    return bad
+
+
 def check(with_live: bool = True) -> int:
     rules = scan_rules()
     if rules is None:
@@ -619,6 +684,7 @@ def check(with_live: bool = True) -> int:
         return 1
     bad = []
     bad += check_doc_consistency()      # O5：文档计数一致 + 悬空引用（不依赖 live 源树，克隆侧可跑）
+    bad += check_scripts_leak()         # O6：仓根 scripts/ 的泄露面自检（同样不依赖 live 源树）
     if with_live:
         bad += check_line_rule_collapse()   # O1a′：整行重写塌缩（构造上丢内容）
         bad += check_publish_sync()         # O4：发布副本是否落后 live

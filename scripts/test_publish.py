@@ -31,6 +31,7 @@ PUBLISH_PATH = HERE / "publish.py"
 
 # —— 门禁敏感串：拼接构造，不写字面量 ——
 _DRIVE = "C" + ":"
+_DRIVE2 = chr(68) + ":"                 # 另一个盘符：不被 HOME 推导的替换台阶覆盖，用于 fail-closed 断言
 _BS = chr(92)
 _USERS = "Users"
 _KON = "KonjacW"
@@ -216,13 +217,14 @@ class PublishGateTests(_Base):
 
     # —— T4：同一含义的多种路径拼写都被归一成同一可移植形式；单反斜杠档走门禁兜底 ——
     def test_T4_path_spelling_variants_scrub_to_same_portable_form(self):
-        text = f"a {_PATH_4BS} b {_PATH_2BS} c {_PATH_FS} d"
+        # 四 / 双 / 单反斜杠 + 正斜杠四种写法都要归一成同一个可移植形式
+        text = f"a {_PATH_4BS} b {_PATH_2BS} c {_PATH_FS} d {_PATH_1BS} e"
         out, n = self.pub.scrub(text)
-        self.assertEqual(n, 3)
-        self.assertEqual(out, f"a {_PORTABLE} b {_PORTABLE} c {_PORTABLE} d")
+        self.assertEqual(n, 4)
+        self.assertEqual(out, f"a {_PORTABLE} b {_PORTABLE} c {_PORTABLE} d {_PORTABLE} e")
 
-        # 替换台阶里没有「单反斜杠」那一档：scrub 原样放过……
-        raw = f"见 {_PATH_1BS} 目录"
+        # HOME 之外的同形态路径（换个盘符）不被替换台阶覆盖：scrub 原样放过……
+        raw = f"见 {_DRIVE2}/" + _USERS + "/" + _KON + "/.codex/skills/active 目录"
         out2, n2 = self.pub.scrub(raw)
         self.assertEqual((n2, out2), (0, raw))
         # ……但通用扫描规则会拦下它（fail-closed，不是静默放行）
@@ -230,6 +232,39 @@ class PublishGateTests(_Base):
         rc, out3 = self.run_check(with_live=False)
         self.assertEqual(rc, 1, out3)
         self.assertIn("本机绝对路径 | active/beta/notes.md:1", out3)
+
+
+    # —— T25/T26/T27：仓根 scripts/ 的泄露面自检（O6）——
+    def test_T25_scripts_leak_self_check_true_positive(self):
+        """scripts/ 下的脚本里出现本机绝对路径 → 必须报错（公开仓能一路发布就是漏了这条）。"""
+        self.write(os.path.join(self.repo, "scripts", "helper.py"),
+                   "P = " + repr(_PATH_FS) + "\n")
+        msg = " | ".join(self.pub.check_scripts_leak())
+        self.assertIn("本机绝对路径", msg)
+        self.assertIn("scripts/helper.py:1", msg)
+        rc, out = self.run_check(with_live=False)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("本机绝对路径 | scripts/helper.py:1", out)
+
+    def test_T26_scripts_private_table_is_exempt_but_shape_matters(self):
+        """私有脱敏表（*.local.json）豁免——它按设计装着私人词表；同目录其它文件不豁免。"""
+        self.write(os.path.join(self.repo, "scripts", "redact-patterns.local.json"),
+                   json.dumps({"私人路径": [_PATH_FS]}, ensure_ascii=False) + "\n")
+        self.assertEqual(self.pub.check_scripts_leak(), [])
+        # 同目录、换个扩展名的同一内容仍然会被扫到（豁免按表名/表本身，不是按目录整片跳过）
+        self.write(os.path.join(self.repo, "scripts", "notes.md"), _PATH_FS + "\n")
+        msg = " | ".join(self.pub.check_scripts_leak())
+        self.assertIn("scripts/notes.md:1", msg)
+
+    def test_T27_scripts_host_tool_name_is_not_a_leak_but_path_is(self):
+        """O6 只查泄露类：脚本里的宿主专有工具名属构造需要（它正是定义替换表的地方），不报；路径照样报。"""
+        self.write(os.path.join(self.repo, "scripts", "tool.py"),
+                   'R = [("' + "delegate" + "_task" + '", "spawn_subagent")]\n')
+        self.assertEqual([b for b in self.pub.check_scripts_leak() if "tool.py" in b], [])
+        self.write(os.path.join(self.repo, "scripts", "tool.py"),
+                   'R = [("' + "delegate" + "_task" + '", "spawn_subagent")]\n# ' + _PATH_FS + "\n")
+        msg = " | ".join(self.pub.check_scripts_leak())
+        self.assertIn("scripts/tool.py:2", msg)
 
     # —— T5：单规则塌缩真阳性 ——
     def test_T5_single_rule_collapse_true_positive(self):
