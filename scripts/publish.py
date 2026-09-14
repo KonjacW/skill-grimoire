@@ -38,6 +38,12 @@ SOURCES = {
     "finishing-a-development-branch":    f"{CODEX}/active/finishing-a-development-branch",
     # 2026-09-12 加入：上游 obra/superpowers 的 MIT 许可已经 GitHub API 实测核实，随包发布（保署名）
     "long-running-progress-monitoring":  f"{CODEX}/active/long-running-progress-monitoring",
+    # 2026-09-13 加入：实现期质量路径（测试驱动）。原仅存在于另一宿主的技能树，
+    # 已按「一个技能只有一份可发现副本」的规则迁入 active/，Hermes 侧旧副本已 .disabled 退役。
+    # 许可：references/writing-good-tests.md 为上游 obra/superpowers 的 MIT 逐字文本（署名见 README
+    # 「许可与致谢」与 SKILL.md 的「来源与署名」行）；SKILL.md 为本仓自有整理。改动该 references
+    # 文件等于产生上游的修改版，须同步维护三处署名。
+    "test-driven-development":           f"{CODEX}/active/test-driven-development",
 }
 KEEP_TOP = {"active", "scripts", "README.md", "ROADMAP.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
 TEXT_EXT = {".md", ".json", ".py", ".js", ".sh", ".ps1", ".dot", ".yaml", ".yml", ".toml", ".txt", ".html", ".css"}
@@ -431,12 +437,112 @@ def sync():
     return log
 
 
+CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8,
+          "九": 9, "十": 10, "十一": 11, "十二": 12}
+
+# 刻意留在包外的被引用技能（正文已写明「本包不含该技能，按本节文字自行执行」的降级说明）。
+# 只豁免这些名字：不在表里的悬空引用是**新引入**的漂移，必须报错。
+KNOWN_EXTERNAL_REFS = {"deliverable-checker-suite"}
+
+# 上游技能包惯用的行内限定词（`(superpowers:writing-skills)` 这种）。读者拿不到那个包，
+# 所以按「外包装指针」报错，要求改写成自足表述。
+EXT_PACK_POINTER = re.compile(r"(superpowers|gsd|obra):[a-z0-9-]{2,}")
+
+
+def _declared_skill_count(text: str):
+    """从文本里读「N 个技能」的中文数字声明。
+
+    返回 `(识别到的数字集合, 无法识别的写法集合)`。**必须把两个集合分开**：
+    没法识别的写法（如「十九个技能」）会在下游比较里变成 `None` 与 `int` 混排，
+    实测直接抛 `TypeError`（`'<' not supported between instances of 'int' and 'NoneType'`），
+    把一个本可读的门禁报错降级成裸 traceback —— 与本模块「报错信息必须可用」的自我要求相反。
+    只查第一处也不行：改了「最后核对」行之后，后文里留着旧数字的声明会被漏掉（实测假阴性）。
+    """
+    nums, unknown = set(), set()
+    for x in re.findall(r"([一二三四五六七八九十]{1,2})个技能", text):
+        if x in CN_NUM:
+            nums.add(CN_NUM[x])
+        else:
+            unknown.add(x)
+    return nums, unknown
+
+
+def check_doc_consistency():
+    """O5：文档一致性门禁（ROADMAP G8）。
+
+    三类漂移在发布流程里曾经完全无人拦（实测：加第 10 个技能时，README 的
+    「九个技能」/一览表行数/ROADMAP 覆盖度表/声明数全靠人肉手抄，门禁一处没拦住）：
+      ① active/<技能>/ 目录数 vs README「技能一览」表的数据行数；
+      ② 同一数字 vs README 正文**所有**「N 个技能」的中文数字声明；
+      ③ 同一数字 vs ROADMAP 里**所有**「包内 N 个技能」声明。
+    （②③ 必须遍历全部出现位置：只查第一处会让后文的陈旧声明蒙混过关。）
+    另加两条指针检查：
+      · `related_skills` 与反引号 `<技能>/references|scripts/...` 的目标必须能在 active/ 内解析
+        （KNOWN_EXTERNAL_REFS 里的名字豁免——那是刻意的降级形态）；
+      · 上游技能包惯用的 `(包名:技能名)` 行内指针视为「外包装指针」报错（前两条规则都匹配不到它）。
+    """
+    bad = []
+    act = os.path.join(REPO, "active")
+    n_dirs = len([d for d in os.listdir(act) if os.path.isdir(os.path.join(act, d))]) \
+        if os.path.isdir(act) else 0
+
+    rp = os.path.join(REPO, "README.md")
+    readme = open(rp, encoding="utf-8", errors="replace").read() if os.path.isfile(rp) else ""
+    seg = re.search(r"^## 技能一览(.*?)^## ", readme, re.S | re.M)
+    n_rows = len(re.findall(r"^\| `", seg.group(1), re.M)) if seg else -1
+    decl, decl_unknown = _declared_skill_count(readme)
+
+    gp = os.path.join(REPO, "ROADMAP.md")
+    road = open(gp, encoding="utf-8", errors="replace").read() if os.path.isfile(gp) else ""
+    road_nums = {int(x) for x in re.findall(r"包内\s*(\d+)\s*个技能", road)}
+
+    if n_rows != n_dirs:
+        bad.append(f"文档计数不一致 | README「技能一览」表 {n_rows} 行 vs active/ 实际 {n_dirs} 个技能")
+    if not decl and not decl_unknown:
+        bad.append("文档计数不一致 | README 正文找不到「N 个技能」声明")
+    for u in sorted(decl_unknown):
+        bad.append(f"文档计数不一致 | README 出现无法解析的技能数写法「{u}个技能」"
+                   f"（CN_NUM 只覆盖一至十二；请改用阿拉伯数字写法或补映射）")
+    for d in sorted(x for x in decl if x != n_dirs):
+        bad.append(f"文档计数不一致 | README 正文声明 {d} 个技能 vs active/ 实际 {n_dirs} 个")
+    if not road_nums:
+        bad.append("文档计数不一致 | ROADMAP 找不到「包内 N 个技能」声明")
+    for d in sorted(x for x in road_nums if x != n_dirs):
+        bad.append(f"文档计数不一致 | ROADMAP 声明 {d} 个技能 vs active/ 实际 {n_dirs} 个"
+                   f"（叙述性引用旧计数请写成 N={d}，不要复述声明句式，否则本门禁会把它一并拦下）")
+
+    pkg = {d for d in os.listdir(act) if os.path.isdir(os.path.join(act, d))} if os.path.isdir(act) else set()
+    for sk in sorted(pkg):
+        for r, _, fs in os.walk(os.path.join(act, sk)):
+            for f in fs:
+                if not f.endswith((".md", ".yaml")):
+                    continue
+                t = open(os.path.join(r, f), encoding="utf-8", errors="ignore").read()
+                names = set(re.findall(r"`([a-z0-9][a-z0-9-]{2,})/(?:references|scripts|templates|assets)/", t))
+                names |= {x.strip() for mm in re.findall(r"related_skills:\s*\[([^\]]*)\]", t)
+                          for x in mm.split(",") if x.strip()}
+                for n in sorted(names):
+                    if n == sk or n in pkg or n in KNOWN_EXTERNAL_REFS:
+                        continue
+                    rel = os.path.relpath(os.path.join(r, f), REPO).replace("\\", "/")
+                    bad.append(f"悬空引用（目标不在包内）| {rel}: {sk} → {n}")
+                # 第三种形态：上游技能包惯用的「(包名:技能名)」行内指针——既不匹配 related_skills，
+                # 也不匹配反引号路径，所以前两条规则漏得过（实测：迁入的上游文本里就有
+                # `(superpowers:writing-skills)`，一路通过旧门禁）。这里按已知的上游包限定词拦截，
+                # 要求改写成自足表述。
+                for m2 in EXT_PACK_POINTER.finditer(t):
+                    rel = os.path.relpath(os.path.join(r, f), REPO).replace("\\", "/")
+                    bad.append(f"外包装指针（读者无法解析，请改自足表述）| {rel}: {m2.group(0)}")
+    return bad
+
+
 def check(with_live: bool = True) -> int:
     rules = scan_rules()
     if rules is None:
         print("✗ 门禁未能运行（私有脱敏表不可用）→ 按 fail-closed 处理，禁止推送。")
         return 1
     bad = []
+    bad += check_doc_consistency()      # O5：文档计数一致 + 悬空引用（不依赖 live 源树，克隆侧可跑）
     if with_live:
         bad += check_line_rule_collapse()   # O1a′：整行重写塌缩（构造上丢内容）
         bad += check_publish_sync()         # O4：发布副本是否落后 live
@@ -459,7 +565,7 @@ def check(with_live: bool = True) -> int:
         for b in sorted(set(bad)):
             print("   ", b)
         return 1
-    print(f"✓ 门禁通过：{len(SOURCES)} 个技能；无私人路径/项目名/实名/密钥/宿主专有写法；frontmatter 合法；全 UTF-8")
+    print(f"✓ 门禁通过：{len(SOURCES)} 个技能；文档计数一致；无私人路径/项目名/实名/密钥/宿主专有写法；frontmatter 合法；全 UTF-8")
     return 0
 
 

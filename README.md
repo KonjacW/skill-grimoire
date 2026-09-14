@@ -4,7 +4,7 @@
 
 > *grimoire* ＝ 魔导书：把技能收进一本随时可翻阅、维护、增补的书。
 
-九个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
+十个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
 它们不绑定具体项目、不依赖第三方库；技能以文本为主，只有 `long-running-progress-monitoring` 带两个 PowerShell 脚本（`active/long-running-progress-monitoring/scripts/`），装进你的 Codex 就能用。
 
 ## 工作流全景
@@ -23,6 +23,11 @@
  ├─ 要并行时
  │   └─ subagent-fanout-delivery   R1/R2/R3 重叠分级 → 任务卡 → 分批 → 主 agent 集成
  │       └─ references/overlap-classification.md
+ │       └─ references/iterative-research.md      目标未定、要跑多轮的开放问题：长驻子代理 + steer
+ │
+ ├─ 实现期间
+ │   └─ test-driven-development    RED 失败测试 → GREEN 最小实现 → REFACTOR（无测试面则记录原因）
+ │       └─ references/writing-good-tests.md
  │
  ├─ 干完了
  │   └─ pre-commit-verification    证据强度与风险相称
@@ -48,7 +53,8 @@
 | `using-superpowers` | **路由入口**：三档（直通 / 轻流程 / 正式计划）+ 唯一一次并行判断 | 任务开始时决定用哪些技能、要不要并行 |
 | `plan` | **计划**：把已确认方案写成交付物级计划；含执行回路与 8 字段模板 | 高风险 / 共享契约 / 迁移权限部署 / 跨会话任务 |
 | `spike` | **丢弃式验证**：关键假设先做一次性实验证伪，再动手 | 方案里有没验证过的关键假设 |
-| `subagent-fanout-delivery` | **并行 fan-out**：R1/R2/R3 重叠分级、任务卡契约、写入权边界、批次收尾 | 一次要产出多个同类文件/模块；长文档分章节 |
+| `subagent-fanout-delivery` | **并行 fan-out**：R1/R2/R3 重叠分级、任务卡契约、写入权边界、批次收尾；含迭代式研究形态（`references/iterative-research.md`） | 一次要产出多个同类文件/模块；长文档分章节；目标未定且要跑多轮 |
+| `test-driven-development` | **实现期质量路径**：RED → GREEN → REFACTOR 的路由表；无可靠测试面时要求记录原因 | 可稳定测试的功能、Bug 修复、行为回归 |
 | `pre-commit-verification` | **完成前验证**：风险档 → 最小充分证据；安全扫描与质量门禁 | 准备声明"做完了"之前 |
 | `review-gate` | **push 前门禁**：独立只读 Review，风险三档、finding 严重性三档、修复后复核 | 有仓库行为变更、准备 push |
 | `finishing-a-development-branch` | **收尾**：验证测试 → 摆出集成选项（本地合并 / PR / 保持）→ 清理 | 分支工作结束、由你决定怎么落地 |
@@ -72,11 +78,37 @@ New-Item -ItemType Directory -Force "$env:USERPROFILE\.codex\skills\active" | Ou
 Copy-Item -Recurse .\skill-grimoire\active\* "$env:USERPROFILE\.codex\skills\active\"
 ```
 
-技能在**会话启动时**载入，装完新开一个会话即可。
+技能在**会话启动时**载入（索引在会话开始时构建，装完新开一个会话才生效），然后按下一节把它装配到 `AGENTS.md`。
+
+## 装配到 AGENTS.md（强烈建议，否则技能可能永不触发）
+
+技能**不会自动触发**：宿主在每轮只注入「名字 + 描述 + 路径」，正文要不要读由模型当场决定，**没有任何匹配器**。实测口径（技能库审计）：两个技能在索引里存在了 118 个会话，分别只被读过 6 次和 3 次；唯一有稳定读取记录的，是被写进 `AGENTS.md` 硬绑定的那一个。
+
+所以装完技能后，把下面这段贴进你项目的 `AGENTS.md`（场景措辞换成你自己平时真实会打的字）：
+
+```markdown
+## 技能路由（按可观察症状，命中即先读对应技能正文再动手）
+
+技能索引里只有「名字 + 描述 + 路径」，触发条件写在正文里——**不先读正文，就等于没有条件**。
+下称 `<S>` = 你放技能的目录（默认 `~/.codex/skills/active/`）。
+
+- 要把一次任务拆给多个子代理，或一次产出多个同类文件/模块（「并行」「分几个」「多产物」）→ `<S>subagent-fanout-delivery/SKILL.md`
+- 目标未定、没有现成验收判据，且预期要跑多轮（挖想法 / 机制归因 / 方案寻优）→ 同上，按其中《迭代式并行研究》
+- 只读勘察 / 清点 / 比对 / 审计 / 记录检索 → 同上，按其中《只读取证类 fan-out》
+- 方案里有未验证的关键假设、要先证伪再动手 → `<S>spike/SKILL.md`
+- 高风险 / 跨会话 / 共享契约 / 迁移·权限·部署，需要出计划 → `<S>plan/SKILL.md`
+- 任务开始要判断走哪一档（直通 / 轻流程 / 正式计划）→ `<S>using-superpowers/SKILL.md`
+- 开始写代码、修 bug、加回归测试（要测试先行）→ `<S>test-driven-development/SKILL.md`
+- 准备声明「做完了」之前 → `<S>pre-commit-verification/SKILL.md`
+- 有仓库 + 行为变更 + 准备 push → `<S>review-gate/SKILL.md`
+- 分支工作结束，要合并 / 开 PR / 保留 / 清理 → `<S>finishing-a-development-branch/SKILL.md`
+- 换会话、交给下一个无记忆的 agent、写交接文档 → `<S>agent-handover-prompts/SKILL.md`
+- 长批次训练 / 批处理在跑，要盯进度与失败 → `<S>long-running-progress-monitoring/SKILL.md`
+```
 
 ## 怎么用
 
-- **自动路由**：技能靠 `description` 匹配任务。例如「准备 push 了，先过一遍门禁」→ `review-gate`；「把这个规格拆成 3 个模块并行做」→ `subagent-fanout-delivery`；「换个会话接着做」→ `agent-handover-prompts`。
+- **描述只是候选信号，不是自动路由**：宿主不跑匹配器（见上一节），`description` 只影响「模型愿不愿意打开它」——**装进索引 ≠ 会被读**。稳定命中的办法是显式点名，或在 `AGENTS.md` 里建场景表。场景例句：「准备 push 了，先过一遍门禁」→ `review-gate`；「把这个规格拆成 3 个模块并行做」→ `subagent-fanout-delivery`；「换个会话接着做」→ `agent-handover-prompts`。
 - **显式点名**：在提示里写技能名，例如「用 `subagent-fanout-delivery` 的 R1/R2/R3 给这个任务分级」。
 - **按需组合**：不必每次跑完整链路——小改动走 `using-superpowers` 的"直通"档，只有真需要设计和并行时才展开。
 
@@ -96,7 +128,11 @@ active/<skill>/SKILL.md        技能本体（每个技能一个目录）
 active/<skill>/references/     按需加载的细则（分级表、模板、门禁提示模板等）
 active/<skill>/scripts/        个别技能自带的可执行辅助脚本（如长任务监控的 PowerShell 脚本）
 scripts/publish.py             维护者用：重建本仓库（宿主中立化 + 脱敏 + fail-closed 门禁）
+scripts/test_publish.py        维护者用：上面那个门禁的标准库测试（16 个用例，纯标准库、零依赖）
 ```
+
+维护者自检：在仓库根跑 `python scripts/test_publish.py -v`（或 `python -m unittest discover -s scripts -p "test_*.py"`）。
+门禁本身改动的规矩是**先加会红的用例**——现有用例的反例（变异检验）已证明它们能真的变红，不是摆设。
 
 ## 占位符说明
 
@@ -126,6 +162,7 @@ scripts/publish.py             维护者用：重建本仓库（宿主中立化 
 
 | 技能 | 来源 |
 |---|---|
+| `test-driven-development` | [obra/superpowers](https://github.com/obra/superpowers)（MIT © 2025 Jesse Vincent）：`references/writing-good-tests.md` 为上游文本，**唯一的改动是删除其中一处指向上游另一技能的行内指针**；`SKILL.md` 为本仓自有整理 |
 | `finishing-a-development-branch` | [obra/superpowers](https://github.com/obra/superpowers) |
 | `pre-commit-verification` | obra/superpowers + MorAlekss |
 | `spike` | GSD（Get Shit Done）项目的 `/gsd-spike` 工作流，MIT © 2025 Lex Christopherson |
