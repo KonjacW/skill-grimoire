@@ -46,7 +46,7 @@
          └─ references/进展交底骨架.md
 ```
 
-旁路（与上面各步并行）：用户说「开汇报」→ `conversation-progress-report` 在**同一对话内**维护一份面向用户本人的实时进展文件（`report/` 下），有实质进展才滚动更新，任务收尾出终稿后自行停手。
+旁路（与上面各步并行）：`conversation-progress-report` 在**同一对话内**维护一份面向用户本人的实时进展文件（`report/` 下）——出现第一个阶段成果时**自动开**，有实质进展才滚动更新，任务收尾出终稿后自行停手。它不靠口令触发（宿主没有匹配器，只有「每轮自动出现的东西」才算数）：Hermes 侧由 `pre_llm_call` shell hook 每轮条件注入一行提醒，Codex 侧靠下一节的症状条目常驻生效。
 
 ## 技能一览
 
@@ -62,7 +62,7 @@
 | `finishing-a-development-branch` | **收尾**：验证测试 → 摆出集成选项（本地合并 / PR / 保持）→ 清理 | 分支工作结束、由你决定怎么落地 |
 | `agent-handover-prompts` | **交接**：任务卡交接 vs 进展交底，结论四层可信度 + 机检清单 | 换会话、交给无记忆的下一 agent |
 | `long-running-progress-monitoring` | **长任务进度监控**：description 原文「Use to monitor long-running training or batch jobs.」；含自带脚本与文档化内联降级 | 长跑训练 / 批处理作业需要看进度时 |
-| `conversation-progress-report` | **对话进展汇报**：同一对话内维护面向用户本人的成果汇报（「开汇报」启动；纯事件驱动，有实质进展才更新） | 用户说「开汇报 / 看汇报 / 关汇报」时 |
+| `conversation-progress-report` | **对话进展汇报**：对话一出现阶段成果就**自动**维护一份面向用户本人的成果汇报（不用口令；「开/看/关汇报」只作手动控制面）；含 Hermes 侧 `pre_llm_call` 提醒脚本 | 对话出现阶段成果时自动触发 |
 
 ## 安装
 
@@ -109,7 +109,7 @@ Copy-Item -Recurse .\skill-grimoire\active\* "$env:USERPROFILE\.codex\skills\act
 - 分支工作结束，要合并 / 开 PR / 保留 / 清理 → `<S>finishing-a-development-branch/SKILL.md`
 - 换会话、交给下一个无记忆的 agent、写交接文档 → `<S>agent-handover-prompts/SKILL.md`
 - 长批次训练 / 批处理在跑，要盯进度与失败 → `<S>long-running-progress-monitoring/SKILL.md`
-- 用户说「开汇报 / 看汇报 / 关汇报」→ `<S>conversation-progress-report/SKILL.md`
+- 对话出现第一个阶段成果（完成一个阶段 / 关键结论 / 实验出数 / 口径定版）→ 自动开汇报并维护，不必等用户开口；口令「开汇报 / 看汇报 / 关汇报」只作控制面 → `<S>conversation-progress-report/SKILL.md`
 ```
 
 ## 怎么用
