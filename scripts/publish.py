@@ -48,6 +48,8 @@ SOURCES = {
     # 「许可与致谢」与 SKILL.md 的「来源与署名」行）；SKILL.md 为本仓自有整理。改动该 references
     # 文件等于产生上游的修改版，须同步维护三处署名。
     "test-driven-development":           f"{CODEX}/active/test-driven-development",
+    # 2026-09-15 加入：同一对话内、面向用户本人的周期性成果汇报（口令「开汇报」启动，双轨更新）。
+    "conversation-progress-report":      f"{CODEX}/active/conversation-progress-report",
 }
 KEEP_TOP = {"active", "scripts", "README.md", "ROADMAP.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
 TEXT_EXT = {".md", ".json", ".py", ".js", ".sh", ".ps1", ".dot", ".yaml", ".yml", ".toml", ".txt", ".html", ".css"}
