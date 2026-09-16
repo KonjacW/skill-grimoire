@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Write a markdown plan to docs/plans/; no execution.
+description: "Use when 高风险/跨会话/共享契约任务要先出计划：写 markdown 计划文件，不执行。"
 license: MIT
 metadata:
   agent:

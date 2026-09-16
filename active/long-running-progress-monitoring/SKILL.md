@@ -1,6 +1,6 @@
 ---
 name: long-running-progress-monitoring
-description: "Use to monitor long-running training or batch jobs."
+description: "Use when 长批次在跑要盯进度与失败：事件协议 + 监控脚本。"
 license: MIT
 metadata:
   agent:

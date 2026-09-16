@@ -1,6 +1,6 @@
 ---
 name: finishing-a-development-branch
-description: "Use to integrate finished work into a branch."
+description: "Use when 分支活干完：本地合并/开 PR/保留，由用户选。"
 license: MIT
 metadata:
   agent:

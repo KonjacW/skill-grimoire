@@ -1,6 +1,6 @@
 ---
 name: review-gate
-description: "Use when repo changes need review before push."
+description: "Use when 有仓库+行为变更准备 push：先过独立只读 Review。"
 license: MIT
 metadata:
   agent:

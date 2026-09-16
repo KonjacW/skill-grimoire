@@ -1,6 +1,6 @@
 ---
 name: spike
-description: "Throwaway experiments to validate an idea before build."
+description: "Use when 关键假设未验证：先做丢弃式实验证伪，再决定要不要建。"
 license: MIT
 metadata:
   agent:

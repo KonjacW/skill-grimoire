@@ -1,6 +1,6 @@
 ---
 name: test-driven-development
-description: Use when implementing a change test-first (TDD).
+description: "Use when 改代码要先写失败测试（RED→GREEN→REFACTOR）。"
 ---
 
 # 测试驱动开发

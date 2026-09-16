@@ -1,6 +1,6 @@
 ---
 name: using-superpowers
-description: "Use when workflow skills or shared contracts are unclear."
+description: "Use when 任务开工：选档位（直通/轻流程/正式计划）并做唯一一次并行判断（A 产出 / B 只读取证 / C 发散）。"
 license: MIT
 metadata:
   agent:

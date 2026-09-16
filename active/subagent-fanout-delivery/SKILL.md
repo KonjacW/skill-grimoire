@@ -1,6 +1,6 @@
 ---
 name: subagent-fanout-delivery
-description: "Use when splitting multi-artifact work across subagents."
+description: "Use when 要并行/分几个子代理/多产物，或只读勘察清点比对≥3 包 —— 分片并行与任务卡。"
 license: MIT
 metadata:
   agent:
