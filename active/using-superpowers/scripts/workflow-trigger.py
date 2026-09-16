@@ -121,14 +121,19 @@ def extract_payload(payload):
 
 
 def decide(user_message, n_history: int, parent_session_id: str, state: dict):
-    """纯函数：返回 (命中的规则 dict 或 None, 新 state)。不读不写文件。"""
-    state = dict(state or {})
-    last = dict(state.get("last") or {})
+    """纯函数：返回 (命中的规则 dict 或 None, 新 state)。不读不写文件。
+
+    状态文件是**外部输入**（可能被手改、被旧版本写过、将来字段改型），所以这里的取值一律
+    防御性处理：坏值等价于「没有历史注入记录」，绝不把异常抛给调用方。
+    """
+    state = state if isinstance(state, dict) else {}
+    raw_last = state.get("last")
+    last = dict(raw_last) if isinstance(raw_last, dict) else {}
     if parent_session_id:
-        return None, state                                  # 子代理回合：静默
+        return None, {}                                      # 子代理回合：静默
     msg = _text(user_message)
     if not msg.strip():
-        return None, state
+        return None, {"last": last}
     suppressed = bool(SUPPRESS_RX.search(msg))
     try:
         n = int(n_history)
@@ -141,12 +146,15 @@ def decide(user_message, n_history: int, parent_session_id: str, state: dict):
             continue
         if not re.search(rule["rx"], msg):
             continue
-        if n - int(last.get(rule["skill"], -(10 ** 9))) < COOLDOWN_MSGS:
+        try:
+            prev = int(last.get(rule["skill"], -(10 ** 9)))
+        except Exception:                                    # noqa: BLE001
+            prev = -(10 ** 9)                                # 坏值 ⇒ 当没有历史注入
+        if n - prev < COOLDOWN_MSGS:
             continue                                         # 冷却内：不重复
         last[rule["skill"]] = n
-        state["last"] = last
-        return rule, state
-    return None, state
+        return rule, {"last": last}
+    return None, {"last": last}
 
 
 def render(rule: dict) -> str:
@@ -227,6 +235,29 @@ def selftest() -> int:
             bad += 1
             print("  FAIL  异常输入抛错:", repr(weird), exc)
 
+    # 坏 state 不得抛：脚本的自我约束是「任何异常吞掉、绝不影响回合」。
+    # 状态文件可能被手改、被旧版本写过、或未来字段改型，main() 只按自己的状态文件写读，
+    # 一旦这里抛出去，这次该注入的提醒会静默丢失（hook rc!=0）。
+    for bad_state in ({"last": [1, 2]}, {"last": {"review-gate": "oops"}}, {"last": None}, "not-a-dict"):
+        try:
+            r, _st = decide("准备 push 到 main", 14, parent_session_id="", state=bad_state)
+            ok = r is not None                               # 坏值 ⇒ 当作「没有历史注入」，照常命中
+        except Exception as exc:                             # noqa: BLE001
+            ok = False
+            print("        坏 state 抛错:", type(exc).__name__, exc)
+        bad += 0 if ok else 1
+        print(("  PASS " if ok else "  FAIL "), f"坏 state 不抛 {bad_state!r}")
+
+    # 已知限制固定：payload 不带 conversation_history 时 n 恒为 0，冷却判据退化。
+    # 退化后的行为是「同一技能本会话只注入一次」——这是可接受的下限，故用用例钉死，
+    # 避免将来被无声改成「每轮都注入」。
+    _st = {}
+    r1, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
+    r2, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
+    ok = r1 is not None and r2 is None
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "), "history 缺失(n=0)：本会话只注入一次（已知限制，钉死）")
+
     # 载荷级接线（曾出错的地方）：Hermes 把 `parent_session_id` **提升为顶层 payload 键**
     # （agent/shell_hooks.py 的 _TOP_LEVEL_PAYLOAD_KEYS），只读 extra 会让子代理回合静默失效。
     # 纯函数级用例测的是 decide() 的入参，测不到这段接线 —— 所以这里必须喂**真实形状的 payload**。
@@ -263,23 +294,22 @@ def main(argv) -> int:
         print(render(rule) if rule else "(不注入)")
         return 0
 
+    # 兜底：这是**每轮都跑**的 hook，任何异常都必须退化成「不注入」，而不是抛出去让进程 rc!=0
+    # （rc!=0 会让宿主记 warning，并让本该注入的那一行静默丢失）。
     try:
         payload = json.load(sys.stdin)
+        if str(payload.get("hook_event_name") or "") != "pre_llm_call":
+            emit({})                                         # 防御：别的 payload 一律静默
+            return 0
+        msg, n, parent = extract_payload(payload)
+        sid = str(payload.get("session_id") or "unknown")
+        state_path = hermes_home() / STATE_DIRNAME / f"{sid}.json"
+        state = load_state(state_path)
+        rule, new_state = decide(msg, n, parent, state)
+        save_state(state_path, new_state, n)                 # 每轮写心跳（可观测，不注入）
+        emit({"context": render(rule)} if rule else {})
     except Exception:                                        # noqa: BLE001
         emit({})
-        return 0
-    if str(payload.get("hook_event_name") or "") != "pre_llm_call":
-        emit({})                                             # 防御：别的 payload 一律静默
-        return 0
-
-    msg, n, parent = extract_payload(payload)
-    sid = str(payload.get("session_id") or "unknown")
-    state_path = hermes_home() / STATE_DIRNAME / f"{sid}.json"
-
-    state = load_state(state_path)
-    rule, new_state = decide(msg, n, parent, state)
-    save_state(state_path, new_state, n)                     # 每轮写心跳（可观测，不注入）
-    emit({"context": render(rule)} if rule else {})
     return 0
 
 

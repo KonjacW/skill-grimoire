@@ -274,9 +274,6 @@ behavior, they pass, and there are no regressions against the baseline.
 
 ## Pitfalls
 
-- **把「不可压缩地板」当成余量** — 性能类改动收尾核验时，必须把剩余耗时拆成「可优化的部分」与「地板」
-  （如解释器启动 ~190ms、进程墙钟、网络往返）。剩余量 ≈ 地板时报「已到地板」，不要含糊地说「都优化好了」，
-  也不要反过来声称还有优化空间。区分「脚本内自报耗时」与「进程墙钟」两个口径，别混用。
 - **Empty diff** — check `git status`, tell user nothing to verify
 - **Not a git repo** — skip and tell user
 - **Large diff (>15k chars)** — split by file, review each separately
