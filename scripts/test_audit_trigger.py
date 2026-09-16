@@ -24,7 +24,7 @@ create table sessions (id text primary key, parent_session_id text, started_at r
   ended_at real, message_count int, tool_call_count int, input_tokens int, output_tokens int,
   cache_read_tokens int, reasoning_tokens int, estimated_cost_usd real, model text, title text);
 create table messages (id integer primary key autoincrement, session_id text, role text,
-  tool_name text, tool_calls text, content text, timestamp real);
+  tool_name text, tool_call_id text, tool_calls text, content text, timestamp real);
 """
 
 
@@ -98,6 +98,37 @@ def test_json_coverage_flags_missing_json_sessions():
                 "('p9','tool','terminal','x',1005)")                       # 只有结果行
     cov2 = at.json_coverage(con, since=0)
     assert cov2["sessions_missing_json"] == 1, cov2
+
+
+def mkdb_breakdown():
+    """>10k 分解专用夹具：一行 assistant 含**两个** skill_view 调用（同一轮并发多读）。
+
+    这正是人工归名会出错的形态——按「相邻上一条 assistant 行的第 k 个」猜会把技能归错；
+    正确做法是用 tool 结果行的 `tool_call_id` 与 assistant 行里每个 tool_call 的 `id` 配对。
+    """
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.executescript(SCHEMA)
+    con.execute("insert into sessions values ('p1',null,1000,2000,10,4,10,20,30,0,0,'m','t')")
+    con.execute("insert into messages (session_id,role,tool_name,tool_calls,content,timestamp) values "
+                "('p1','assistant',null,?,'',1001)",
+                (json.dumps([
+                    {"id": "c1", "function": {"name": "skill_view",
+                                              "arguments": json.dumps({"name": "review-gate"})}},
+                    {"id": "c2", "function": {"name": "skill_view",
+                                              "arguments": json.dumps({"name": "plan"})}},
+                ]),))
+    for cid, n in (("c1", 12000), ("c2", 11000), ("c3", 13000), ("c4", 500)):
+        con.execute("insert into messages (session_id,role,tool_name,tool_call_id,content,timestamp) "
+                    "values ('p1','tool','skill_view',?,?,1001)", (cid, "z" * n))
+    return con
+
+
+def test_over10k_breakdown_uses_tool_call_id():
+    """c3 没有配对的调用（无 id 可归名）不得被算进任何技能；c4 低于阈值也不得计入。"""
+    con = mkdb_breakdown()
+    assert at.skill_body_breakdown(con, since=0) == {"review-gate": 1, "plan": 1}
+    assert at.skill_body_breakdown(con, since=0, threshold=1000) == {"review-gate": 1, "plan": 1}
 
 
 if __name__ == "__main__":

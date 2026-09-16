@@ -8,14 +8,17 @@
 
 口径（写进报告时必须原样交代）：
   * 只读打开 state.db（uri mode=ro），绝不写。
-  * **权威口径（调用数）= assistant 行的 `tool_calls` 条目数**。取证：
+  * **权威口径（调用数）= assistant 行的 `tool_calls` 条目数**。取证（2026-09-16，全库快照；数值随库增长漂移，形态不变）：
     * 全库 0 行同时带 `tool_name` 与 `tool_calls`；`role='tool'` 的结果行带 `tool_name`，`role='assistant'` 带 JSON。
-    * `skill_view` / `delegate_task` 两族的**结果行数与 JSON 条目逐会话完全相等**（实测 808/808、416/416，0 例不符）
+    * `skill_view` / `delegate_task` 两族的**结果行数与 JSON 条目逐会话完全相等**（快照 809/809、417/417，0 例不符）
       ⇒ 这两族的两边相加会整整翻倍（本脚本第一版就这么错过一次）。
-    * **但这不能推广到全库**：整体 JSON 条目 46,448 vs 结果行 46,410（(会话, 工具) 组合 262/3402 不相等），
-      另有 836 条 JSON 条目以通用名 `tool_call` 记录（其真名在结果行里，如 computer_use / process_manage）。
-      ⇒ **结果行只用于返回体统计（`skill_body_stats`），不参与调用数**。
-    * `sessions.tool_call_count` 与 JSON 条目在 42/704 个会话上不一致（最极端 125 vs 1610）⇒ **两套口径不可混用**，报告里必须分开写。
+    * **但这不能推广到全库**：快照整体 JSON 条目 46,510 vs 结果行 46,472（(会话, 工具) 组合 262/3407 不相等），
+      另有 840 条 JSON 条目以通用名 `tool_call` 记录（其真名在结果行里，如 computer_use / process_manage）。
+      ⇒ **结果行只用于返回体统计（`skill_body_stats` / `skill_body_breakdown`），不参与调用数**。
+    * `sessions.tool_call_count` 与 JSON 条目在快照 41/706 个会话上不一致（最极端 125 vs 1610）⇒ **两套口径不可混用**，报告里必须分开写。
+  * 「>10k 返回体按技能分解」用 `skill_body_breakdown()`：归属靠 tool 结果行的 `tool_call_id` 与 assistant 行里每个
+    tool_call 的 `id` 配对。**不要用「相邻上一条 assistant 行的第 k 个」猜**——一行 assistant 可含多个 tool_calls，
+    猜法会把技能归错（本仓就错过一次：把 `subagent-fanout-delivery` 记成 4 条，实为 0 条）。
   * 窗口 = now - days*86400，UTC 秒语义。
   * 会话数含子会话；父会话 = parent_session_id is null。
   * 墙钟（ended_at-started_at）在挂载/等待型会话里会失真，本脚本不输出它当「时长」。
@@ -162,6 +165,50 @@ def skill_body_stats(con, since) -> dict:
     }
 
 
+def skill_body_breakdown(con, since, threshold: int = 10000) -> dict:
+    """按技能统计「返回体 > threshold 字符」的读取次数。
+
+    **归属必须用 `tool_call_id` 配对**（tool 结果行的 `tool_call_id` ↔ assistant 行里每个 tool_call 的 `id`）：
+    一行 assistant 可能含**多个** tool_calls（同一轮并发多读），按「相邻上一条 assistant 行的第 k 个」猜
+    会把技能归错——本仓人工归名时就错过（把 subagent-fanout-delivery 记成 4 条，实为 0 条）。
+    无配对 id 的结果行直接丢弃（不猜），宁少不多。
+    """
+    names = {}
+    for r in con.execute("select tool_calls from messages "
+                         "where role='assistant' and tool_calls is not null"):
+        try:
+            arr = json.loads(r["tool_calls"])
+        except Exception:                                    # noqa: BLE001
+            continue
+        if not isinstance(arr, list):
+            continue
+        for c in arr:
+            if not isinstance(c, dict):
+                continue
+            f = c.get("function") or {}
+            if f.get("name") != "skill_view":
+                continue
+            cid = c.get("id")
+            args = f.get("arguments")
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:                            # noqa: BLE001
+                    args = None
+            nm = args.get("name") if isinstance(args, dict) else None
+            if cid and nm:
+                names[cid] = nm
+    out = collections.Counter()
+    for r in con.execute("select tool_call_id, length(content) as L from messages "
+                         "where timestamp >= ? and tool_name = 'skill_view'", (since,)):
+        if (r["L"] or 0) <= threshold:
+            continue
+        nm = names.get(r["tool_call_id"])
+        if nm:
+            out[nm] += 1
+    return dict(out)
+
+
 def tool_output_bytes(con, since) -> collections.Counter:
     out = collections.Counter()
     for r in con.execute("select tool_name, content from messages where timestamp >= ? and tool_name is not null",
@@ -199,7 +246,10 @@ def report(con, since, days) -> dict:
             "median_tool_calls_parent": ses["median_tool_calls_parent"],
             "total_input": ses["total_input"],
             "total_cache_read": ses["total_cache_read"],
-            "skill_view_body": body,
+            "skill_view_body": {**body, "over_10k_by_skill": skill_body_breakdown(con, since),
+                                "over_10k_grimoire": sum(
+                                    v for k, v in skill_body_breakdown(con, since).items()
+                                    if k in GRIMOIRE)},
             "tool_output_share": {k: round(100.0 * v / tot_out, 2) for k, v in outb.most_common(8)},
         },
         "M4_divergence": {
@@ -240,7 +290,8 @@ def main(argv) -> int:
           f"缓存读 {c['median_cache_read_parent']:,.0f}")
     b = c["skill_view_body"]
     print(f"     skill_view 返回体 {b['n']} 次，中位 {b['median_chars']:,.0f} 字符，"
-          f"最大 {b['max_chars']:,}，>10k 字符 {b['over_10k']} 次")
+          f"最大 {b['max_chars']:,}，>10k 字符 {b['over_10k']} 次"
+          f"（其中本仓技能 {b.get('over_10k_grimoire', 0)} 次；按技能：{b.get('over_10k_by_skill', {})}）")
     print(f"     工具输出份额：{c['tool_output_share']}")
     return 0
 
