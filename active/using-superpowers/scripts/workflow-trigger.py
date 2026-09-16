@@ -16,7 +16,8 @@ wire protocol（Hermes shell hook；见 agent/shell_hooks.py 与 agent/turn_cont
 
 设计约束（每条都对应一个真实代价）：
 - 命中才注入、每轮最多 1 行、同一技能 COOLDOWN_MSGS 条消息内不重复 —— 注入本身就是成本。
-- `parent_session_id` 非空 ⇒ 这是被派出去的子代理回合，直接静默（14 天 390 次 spawn_subagent）。
+- `parent_session_id` 非空 ⇒ 子代理回合直接静默（取证 2026-09-16：14 天窗口 390 次 `spawn_subagent`），
+  但静默分支**必须保留历史冷却记录**（清空会让下一次「无 parent」的调用立刻重复注入同一技能）。
 - 用户下了硬约束（只评审 / 不要执行 / 只改这一处）⇒ 抑制「并行 / 发散」类提醒。
 - 任何异常吞掉并回 {} —— hook 出错绝不能影响正常回合。
 - 只写技能名，不写路径：Hermes 按名取技能（skill_view），写路径既啰嗦又会引入非中立内容。
@@ -58,8 +59,8 @@ RULES: list = [
     {"id": "open_ended", "kind": "divergence", "min_msgs": 8, "min_len": 16,
      "rx": r"(优化|提升|改进|设计|找机制|找上限|怎么才能|如何提高|探索|能不能更好)",
      "skill": "using-superpowers",
-     "action": "按《一次并行判断》C 档（命中 ≥3 条即默认进入）先预注册判据；多轮发散见 "
-               "subagent-fanout-delivery/references/iterative-research.md。"},
+     "action": "按《一次并行判断》C 档（命中 ≥3 条即默认进入）先预注册判据；多轮发散读 "
+               "subagent-fanout-delivery 的《迭代式并行研究》一节。"},
     {"id": "plan_needed", "kind": "plan",
      "rx": r"(迁移|部署|权限|跨会话|共享契约|高风险|重构)",
      "skill": "plan",
@@ -130,7 +131,7 @@ def decide(user_message, n_history: int, parent_session_id: str, state: dict):
     raw_last = state.get("last")
     last = dict(raw_last) if isinstance(raw_last, dict) else {}
     if parent_session_id:
-        return None, {}                                      # 子代理回合：静默
+        return None, {"last": last}                          # 子代理回合：静默，但**保留历史冷却记录**
     msg = _text(user_message)
     if not msg.strip():
         return None, {"last": last}
@@ -227,6 +228,16 @@ def selftest() -> int:
     ok = r is None
     bad += 0 if ok else 1
     print(("  PASS " if ok else "  FAIL "), "子代理回合静默")
+
+    # 静默分支**必须保留历史 last**：子会话里 parent 键时有时无（本仓实测形态），
+    # 一旦静默那轮把 last 写成 {}，该会话此前所有冷却记录被清空，
+    # 下一次「无 parent」的调用就能立刻重复注入同一技能。
+    prev = {"last": {"review-gate": 5}}
+    r, st_after = decide("准备 push 到 main", 30, parent_session_id="parent-xyz", state=prev)
+    ok = r is None and st_after.get("last") == {"review-gate": 5}
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "),
+          f"子代理回合静默且保留历史 last（否则冷却被清空，实际 {st_after!r}）")
 
     for weird in (None, "", ["列表", "消息"], {"a": 1}, 12):
         try:
