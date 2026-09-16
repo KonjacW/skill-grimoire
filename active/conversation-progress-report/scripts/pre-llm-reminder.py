@@ -1,15 +1,19 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pre_llm_call shell hook —— 自动提醒「进展汇报」技能，让 conversation-progress-report
-不必等用户开口就能被读到。
+"""pre_llm_call shell hook —— 只为「已经启用汇报」的会话注入维护提醒。
 
-设计（为什么是条件注入，而不是每轮都注入）：
-- 短对话（纯问答）不该被这个提醒打扰，也不该付 token：会话消息数 < MIN_MESSAGES 时静默。
-- 提醒要稀有：每新增 EVERY_N 条消息才注入一次（用本机状态文件记「上次注入时的消息数」）。
-- **每轮都写心跳**：状态文件记 {n, last_inject_n, ts}。这是「关汇报」能落地的前提——
-  agent 不一定知道自己的 session_id，让它取状态目录里 mtime 最新的文件即可确定「当前会话」。
-- 用户说「关汇报」时，agent 按技能正文写 `<HERMES_HOME>/progress-report-off/<session_id>.flag`；
-  脚本看到它就对该会话永久静默。
+口令制（用户 2026-09-15 定版）：**默认不写任何 report 文件**。只有用户在本会话说
+「开汇报」（或等价的明确指令）之后，agent 才按技能 conversation-progress-report
+维护该会话的进展文件，并且只在**出现实质性进展**时更新。
+
+本脚本是这条规则的机械保证，**不是**自动开汇报的发动机：
+- 没有启用标记 `<HERMES_HOME>/progress-report-on/<session_id>.flag` ⇒ 一律静默，
+  一个字都不注入（未启用 = 不打扰、不诱导写文件）。
+- 有标记 ⇒ 每新增 EVERY_N 条消息注入一次「别忘了更新」的提醒。
+- 「关汇报」= 删除该 flag（agent 按技能正文执行）。
+- 每轮都写心跳（state 文件）：agent 读环境变量 `HERMES_SESSION_ID` 就知道自己的会话 id
+  （与心跳文件名严格一致）。`progress-report-state/` 里 mtime 最新的文件**只作候选排序**，
+  多会话并发时它属于「最近发过调用的那个会话」，不得用来裁定「我是谁」。
 - 任何异常都吞掉并输出 `{}`（等价「不注入」）：hook 出错绝不能影响正常回合。
 
 wire protocol（Hermes shell hook，见 agent/shell_hooks.py::_serialize_payload）：
@@ -24,13 +28,17 @@ import pathlib
 import sys
 import time
 
-MIN_MESSAGES = 8   # 约 4 轮之后才开始提醒（更短的对话不可能是「有阶段成果」的长活）
-EVERY_N = 6        # 之后每新增 6 条消息提醒一次（约每 3 轮一次，省 token）
+EVERY_N = 6        # 已启用的会话里，每新增 6 条消息提醒一次（约每 3 轮一次，省 token）
 SKILL = "conversation-progress-report"
+REPORT_DIR = "<OBSIDIAN_VAULT>/report"
 
 REMINDER = (
-    "[自动汇报提醒] 本对话若已出现阶段成果（完成一个阶段 / 关键结论 / 实验出数 / 口径定版）"
-    f"且尚未开汇报，按技能 `{SKILL}` 维护 report/ 下的进展文件；用户已说「关汇报」时忽略本提醒。"
+    "[汇报维护提醒] 本会话**已开汇报**（启用标记存在）。按技能 `" + SKILL + "`："
+    "出现实质性进展（完成一个阶段 / 关键决策 / 口径定版 / 实验出数 / 结论翻转）时，"
+    "更新该会话的报告文件（落点 `" + REPORT_DIR + "`，命名 `<对话主题>_进展汇报_<YYYYMMDD>.md`，"
+    "同一对话同一天覆盖同一个文件、顶部更新「更新时间 HH:MM」），"
+    "并在对话里给 3~5 行摘要 + 绝对路径。"
+    "**没有实质性进展就不写**；用户说「关汇报」时按技能正文删除启用标记并停手。"
 )
 
 
@@ -65,20 +73,26 @@ def main() -> None:
     sid = str(payload.get("session_id") or "unknown")
 
     home = hermes_home()
-    off_flag = home / "progress-report-off" / f"{sid}.flag"
+    on_flag = home / "progress-report-on" / f"{sid}.flag"
     state = home / "progress-report-state" / f"{sid}.json"
 
-    if off_flag.exists():
-        emit({})
-        return
-
     last = 0
-    try:
-        last = int(json.loads(state.read_text(encoding="utf-8")).get("last_inject_n", 0))
-    except Exception:
-        last = 0
+    inject = False
 
-    inject = n >= MIN_MESSAGES and (n - last) >= EVERY_N
+    # 关键：没有启用标记就绝不注入。默认路径 = 静默。
+    if on_flag.exists():
+        try:
+            last = int(json.loads(state.read_text(encoding="utf-8")).get("last_inject_n", 0))
+        except Exception:
+            last = 0
+        # 上下文压缩会把 conversation_history 整体替换成更短的列表（n 变小）。
+        # 不处理的话 n - last 恒为负 ⇒ 注入被长期静默，直到 n 重新长回 last + EVERY_N，
+        # 而长会话正是最该「防漏更新」的场景。检测到历史回退就把计数归零，
+        # 使压缩后的下一次调用立刻恢复提醒（而不是再等 6 条消息）。
+        if last > n:
+            last = 0
+        inject = (n - last) >= EVERY_N
+
     if inject:
         last = n
 
@@ -88,7 +102,7 @@ def main() -> None:
         state.write_text(json.dumps({"n": n, "last_inject_n": last, "ts": round(time.time())}),
                          encoding="utf-8")
     except Exception:
-        pass              # 写不进去就退化成「每轮都提醒」——不理想，但绝不能让 hook 崩
+        pass              # 写不进去就退化成「启用后每轮都提醒」——不理想，但绝不能让 hook 崩
 
     emit({"context": REMINDER} if inject else {})
 
