@@ -8,12 +8,14 @@
 
 口径（写进报告时必须原样交代）：
   * 只读打开 state.db（uri mode=ro），绝不写。
-  * **调用数 = assistant 行的 `tool_calls` 条目数**（实测：全库 0 行同时带 `tool_name` 与 `tool_calls`；
-    tool 结果行的数量与 JSON 条目**逐会话相等**（例：delegate_task 390 vs 390，比值 1.00）——
-    把两边相加会整整翻倍，本脚本的第一版就这么错过一次）。
-  * `sessions.tool_call_count` 与 JSON 条目**抽样 5/5 一致，但并非处处相等**（已发现一例 161 vs 211）。
-    ⇒ **M1/M2 用 JSON 条目，M3 用 DB 字段，两套口径不可混用**，报告里必须分开写。
-  * tool 结果行只用于返回体统计，不算调用。
+  * **权威口径（调用数）= assistant 行的 `tool_calls` 条目数**。取证：
+    * 全库 0 行同时带 `tool_name` 与 `tool_calls`；`role='tool'` 的结果行带 `tool_name`，`role='assistant'` 带 JSON。
+    * `skill_view` / `delegate_task` 两族的**结果行数与 JSON 条目逐会话完全相等**（实测 808/808、416/416，0 例不符）
+      ⇒ 这两族的两边相加会整整翻倍（本脚本第一版就这么错过一次）。
+    * **但这不能推广到全库**：整体 JSON 条目 46,448 vs 结果行 46,410（(会话, 工具) 组合 262/3402 不相等），
+      另有 836 条 JSON 条目以通用名 `tool_call` 记录（其真名在结果行里，如 computer_use / process_manage）。
+      ⇒ **结果行只用于返回体统计（`skill_body_stats`），不参与调用数**。
+    * `sessions.tool_call_count` 与 JSON 条目在 42/704 个会话上不一致（最极端 125 vs 1610）⇒ **两套口径不可混用**，报告里必须分开写。
   * 窗口 = now - days*86400，UTC 秒语义。
   * 会话数含子会话；父会话 = parent_session_id is null。
   * 墙钟（ended_at-started_at）在挂载/等待型会话里会失真，本脚本不输出它当「时长」。

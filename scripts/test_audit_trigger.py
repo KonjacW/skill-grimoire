@@ -4,8 +4,10 @@
 
 **口径是这份测试的重点**：真库里一个逻辑调用是**两行** ——
   assistant 行带 `tool_calls` JSON（调用本身），tool 结果行带 `tool_name`（执行结果）。
-实测全库 0 行同时带两者；`sessions.tool_call_count` 与 JSON 条目数逐会话一致（5/5 抽样）。
-⇒ 权威口径 = assistant 行的 JSON 条目数；把结果行也算成调用会整整翻倍。
+取证（2026-09-16）：全库 0 行同时带两者；`skill_view`/`delegate_task` 两族的**结果行数与 JSON 条目逐会话完全相等**
+（808/808、416/416，0 例不符）；但**不能推广到全库**（整体 JSON 46,448 vs 结果行 46,410；另 836 条 JSON 以通用名
+`tool_call` 记录），且 `sessions.tool_call_count` 与 JSON 条目有 42/704 个会话不一致。
+⇒ 权威口径 = assistant 行的 JSON 条目数；把结果行也算成调用会整整翻倍（本脚本第一版就这么错过一次）。
 """
 import importlib.util
 import json
