@@ -333,12 +333,19 @@ def main(argv) -> int:
             emit({})                                         # 防御：别的 payload 一律静默
             return 0
         msg, n, parent = extract_payload(payload)
-        sid = str(payload.get("session_id") or "unknown")
+        sid = str(payload.get("session_id") or "")
+        if not sid:
+            # 没有 session id 就无法按会话去重：宁可不注入，也不写共享状态文件
+            # （A1 语义下，一个共享的 unknown.json 会把该技能对之后所有无 id 调用永久封死，且不自愈）。
+            emit({})
+            return 0
         state_path = hermes_home() / STATE_DIRNAME / f"{sid}.json"
         state = load_state(state_path)
         rule, new_state = decide(msg, n, parent, state)
-        save_state(state_path, new_state, n)                 # 每轮写心跳（可观测，不注入）
+        # 先交付、再落盘：若本轮注入因进程被杀/宿主超时被丢弃，不要留下「已注入」记录
+        # （A1 语义不会自愈，误记 = 该技能在本会话余下回合永久静默）。
         emit({"context": render(rule)} if rule else {})
+        save_state(state_path, new_state, n)                 # 每轮写心跳（可观测，不注入）
     except Exception:                                        # noqa: BLE001
         emit({})
     return 0
