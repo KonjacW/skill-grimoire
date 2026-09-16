@@ -15,9 +15,12 @@ wire protocol（Hermes shell hook；见 agent/shell_hooks.py 与 agent/turn_cont
     stdout = {"context": "追加到本轮用户消息的文本"} 或 {}（不注入）
 
 设计约束（每条都对应一个真实代价）：
-- 命中才注入、每轮最多 1 行、同一技能 COOLDOWN_MSGS 条消息内不重复 —— 注入本身就是成本。
+- 命中才注入、每轮最多 1 行、**同一技能每会话至多 1 次**。为什么不是按消息数冷却：注入文本会写进该轮
+  user 消息的 `api_content` 旁路，并被之后每轮重发（Hermes 源码：`api_content` = "the exact bytes the
+  main loop sent"；压缩器里 `drop_stale_api_content()` 的存在理由就是「replay cannot resend stale bytes」）。
+  按消息数冷却会让常驻成本随会话长度**线性**增长（n×48 字符），每会话一次则上界是常数（7 条 × ≈83 字符）。
 - `parent_session_id` 非空 ⇒ 子代理回合直接静默（取证 2026-09-16：14 天窗口 390 次 `spawn_subagent`），
-  但静默分支**必须保留历史冷却记录**（清空会让下一次「无 parent」的调用立刻重复注入同一技能）。
+  但静默分支**必须保留注入记录**（清空会让下一次「无 parent」的调用重复注入同一技能）。
 - 用户下了硬约束（只评审 / 不要执行 / 只改这一处）⇒ 抑制「并行 / 发散」类提醒。
 - 任何异常吞掉并回 {} —— hook 出错绝不能影响正常回合。
 - 只写技能名，不写路径：Hermes 按名取技能（skill_view），写路径既啰嗦又会引入非中立内容。
@@ -34,7 +37,6 @@ import re
 import sys
 import time
 
-COOLDOWN_MSGS = 12          # 同一技能：距上次注入不足这么多条消息就不再注入
 STATE_DIRNAME = "workflow-trigger-state"
 
 # 规则表 = 单一事实来源。kind: "parallel"/"divergence" 会被用户硬约束抑制。
@@ -128,13 +130,18 @@ def decide(user_message, n_history: int, parent_session_id: str, state: dict):
     防御性处理：坏值等价于「没有历史注入记录」，绝不把异常抛给调用方。
     """
     state = state if isinstance(state, dict) else {}
-    raw_last = state.get("last")
-    last = dict(raw_last) if isinstance(raw_last, dict) else {}
+    injected: set = set()
+    raw = state.get("injected")
+    if isinstance(raw, (list, tuple, set)):
+        injected = {str(x) for x in raw}
+    legacy = state.get("last")                                   # 兼容旧状态文件：{技能: 条数}
+    if isinstance(legacy, dict):
+        injected |= {str(k) for k in legacy}
     if parent_session_id:
-        return None, {"last": last}                          # 子代理回合：静默，但**保留历史冷却记录**
+        return None, {"injected": sorted(injected)}               # 子代理回合：静默，但**保留注入记录**
     msg = _text(user_message)
     if not msg.strip():
-        return None, {"last": last}
+        return None, {"injected": sorted(injected)}
     suppressed = bool(SUPPRESS_RX.search(msg))
     try:
         n = int(n_history)
@@ -147,15 +154,11 @@ def decide(user_message, n_history: int, parent_session_id: str, state: dict):
             continue
         if not re.search(rule["rx"], msg):
             continue
-        try:
-            prev = int(last.get(rule["skill"], -(10 ** 9)))
-        except Exception:                                    # noqa: BLE001
-            prev = -(10 ** 9)                                # 坏值 ⇒ 当没有历史注入
-        if n - prev < COOLDOWN_MSGS:
-            continue                                         # 冷却内：不重复
-        last[rule["skill"]] = n
-        return rule, {"last": last}
-    return None, {"last": last}
+        if rule["skill"] in injected:
+            continue                                         # 本会话已提醒过该技能：不再注入
+        injected.add(rule["skill"])
+        return rule, {"injected": sorted(injected)}
+    return None, {"injected": sorted(injected)}
 
 
 def render(rule: dict) -> str:
@@ -182,7 +185,7 @@ def load_state(path: pathlib.Path) -> dict:
 def save_state(path: pathlib.Path, state: dict, n: int) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps({"n": n, "last": state.get("last") or {}, "ts": round(time.time())}),
+        path.write_text(json.dumps({"n": n, "injected": state.get("injected") or [], "ts": round(time.time())}),
                         encoding="utf-8")
     except Exception:                                        # noqa: BLE001
         pass                                                 # 写不进去只是丢可观测性，绝不抛
@@ -215,29 +218,41 @@ def selftest() -> int:
         if not ok:
             print(f"        消息: {msg!r} n={n}")
 
+    # 注入上限 = 每技能**每会话至多一次**（不是按消息数冷却）。
+    # 为什么：注入文本会写进该轮 user 消息的 api_content 旁路，之后每轮都被重发
+    # （Hermes 源码：api_content = the exact bytes the main loop sent；压缩器的
+    # drop_stale_api_content() 存在理由就是「replay cannot resend stale bytes」）。
+    # 按消息数冷却会让长会话的常驻成本随长度线性增长，改成每会话一次后上界是常数。
     st = {}
-    _r1, st = decide("准备 push 到 main", 14, parent_session_id="", state=st)
-    r2, st = decide("准备 push 到 main", 14 + COOLDOWN_MSGS - 1, parent_session_id="", state=st)
-    r3, _st2 = decide("准备 push 到 main", 14 + COOLDOWN_MSGS, parent_session_id="", state=st)
-    for label, r, want in (("冷却内不重复", r2, None), ("冷却后恢复", r3, "review-gate")):
-        ok = (r["skill"] if r else None) == want
-        bad += 0 if ok else 1
-        print(("  PASS " if ok else "  FAIL "), f"{label}: want={want}")
+    r1, st = decide("准备 push 到 main", 14, parent_session_id="", state=st)
+    r2, st = decide("准备 push 到 main", 999, parent_session_id="", state=st)
+    ok = r1 is not None and r2 is None
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "), "同技能隔再久也不再注入（每会话一次）")
 
-    r, _st3 = decide("准备 push 到 main", 30, parent_session_id="parent-xyz", state={})
+    st = {}
+    ra, st = decide("准备 push 到 main", 14, parent_session_id="", state=st)
+    rb, st = decide("帮我写个交接文档", 20, parent_session_id="", state=st)
+    rc, _st = decide("准备 push 到 main", 30, parent_session_id="", state=st)
+    ok = ra is not None and rb is not None and rc is None
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "), "不同技能各自注入一次，已注入的不再重复")
+
+    # 兼容旧状态文件：老字段 `last` 是 {技能: 条数}，其中出现的技能同样视为「已注入」
+    r, _st = decide("准备 push 到 main", 99, parent_session_id="",
+                    state={"last": {"review-gate": 5}})
     ok = r is None
     bad += 0 if ok else 1
-    print(("  PASS " if ok else "  FAIL "), "子代理回合静默")
+    print(("  PASS " if ok else "  FAIL "), "兼容旧状态文件 last 字段（已注入即不再注入）")
 
-    # 静默分支**必须保留历史 last**：子会话里 parent 键时有时无（本仓实测形态），
-    # 一旦静默那轮把 last 写成 {}，该会话此前所有冷却记录被清空，
-    # 下一次「无 parent」的调用就能立刻重复注入同一技能。
-    prev = {"last": {"review-gate": 5}}
+    # 静默分支**必须保留历史注入记录**：子会话里 parent 键时有时无（本仓实测形态），
+    # 一旦静默那轮把记录清空，下一次「无 parent」的调用就能重新注入。
+    prev = {"injected": ["review-gate"]}
     r, st_after = decide("准备 push 到 main", 30, parent_session_id="parent-xyz", state=prev)
-    ok = r is None and st_after.get("last") == {"review-gate": 5}
+    ok = r is None and st_after.get("injected") == ["review-gate"]
     bad += 0 if ok else 1
     print(("  PASS " if ok else "  FAIL "),
-          f"子代理回合静默且保留历史 last（否则冷却被清空，实际 {st_after!r}）")
+          f"子代理回合静默且保留注入记录（否则会重复注入，实际 {st_after!r}）")
 
     for weird in (None, "", ["列表", "消息"], {"a": 1}, 12):
         try:
@@ -247,21 +262,26 @@ def selftest() -> int:
             print("  FAIL  异常输入抛错:", repr(weird), exc)
 
     # 坏 state 不得抛：脚本的自我约束是「任何异常吞掉、绝不影响回合」。
-    # 状态文件可能被手改、被旧版本写过、或未来字段改型，main() 只按自己的状态文件写读，
-    # 一旦这里抛出去，这次该注入的提醒会静默丢失（hook rc!=0）。
-    for bad_state in ({"last": [1, 2]}, {"last": {"review-gate": "oops"}}, {"last": None}, "not-a-dict"):
+    # 状态文件可能被手改、被旧版本写过、或未来字段改型。期望值按「每会话一次」语义给：
+    # 出现过的技能名（含旧字段 last 的键）一律视为已注入；结构性坏值当作「没注入过」。
+    for bad_state, want_rule in (
+        ({"last": [1, 2]}, True),                            # last 是列表：不认 ⇒ 当没注入过
+        ({"last": {"review-gate": "oops"}}, False),          # 旧字段键名合法 ⇒ 视为已注入
+        ({"last": None}, True),
+        ("not-a-dict", True),
+    ):
         try:
             r, _st = decide("准备 push 到 main", 14, parent_session_id="", state=bad_state)
-            ok = r is not None                               # 坏值 ⇒ 当作「没有历史注入」，照常命中
+            ok = (r is not None) == want_rule
         except Exception as exc:                             # noqa: BLE001
             ok = False
             print("        坏 state 抛错:", type(exc).__name__, exc)
         bad += 0 if ok else 1
-        print(("  PASS " if ok else "  FAIL "), f"坏 state 不抛 {bad_state!r}")
+        print(("  PASS " if ok else "  FAIL "),
+              f"坏 state 不抛且判定正确 {bad_state!r} want_rule={want_rule}")
 
-    # 已知限制固定：payload 不带 conversation_history 时 n 恒为 0，冷却判据退化。
-    # 退化后的行为是「同一技能本会话只注入一次」——这是可接受的下限，故用用例钉死，
-    # 避免将来被无声改成「每轮都注入」。
+    # payload 不带 conversation_history（n 恒为 0）在「每会话一次」语义下不再是退化：
+    # 判定不依赖消息数，只要求「本会话只注入一次」。用用例钉死，避免将来被无声改成「每轮都注入」。
     _st = {}
     r1, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
     r2, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
