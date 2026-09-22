@@ -5,8 +5,10 @@
 要解决的问题（实测，见仓内 ROADMAP G18）：Hermes 的技能索引里只有「名字 + 描述 + 路径」，
 触发条件写在技能正文里，而路由入口 `using-superpowers` 14 天只被读 4 次 ⇒ 并行判断与发散判断
 从不发生。取证结论：Hermes 侧触达 = **用户消息里的词 × 索引描述里的词 × 记忆指针**，三者对齐才发生。
-本脚本补的就是「用户消息里的词」这一环：条件命中时往本轮用户消息追加一行「先读哪个技能」，
-零命中时不产生任何 token。
+本脚本补的就是「用户消息里的词」这一环：条件命中时往本轮用户消息追加一行「先读哪个技能」。
+另有一条**兜底纪律**（DISCIPLINE_SKILL / output_diet）在无其他命中时注入：它约束的是工具用法，
+而「本轮要读什么、贴什么」在用户消息里往往没有症状词（「看看这个」就能触发一次 136k 字符的整篇读取），
+靠 rx 打不中，所以不设症状词，每会话注入一次。
 
 wire protocol（Hermes shell hook；见 agent/shell_hooks.py 与 agent/turn_context.py）：
     stdin  = {"hook_event_name": "pre_llm_call", "session_id": "...", "cwd": "...",
@@ -18,7 +20,8 @@ wire protocol（Hermes shell hook；见 agent/shell_hooks.py 与 agent/turn_cont
 - 命中才注入、每轮最多 1 行、**同一技能每会话至多 1 次**。为什么不是按消息数冷却：注入文本会写进该轮
   user 消息的 `api_content` 旁路，并被之后每轮重发（Hermes 源码：`api_content` = "the exact bytes the
   main loop sent"；压缩器里 `drop_stale_api_content()` 的存在理由就是「replay cannot resend stale bytes」）。
-  按消息数冷却会让常驻成本随会话长度**线性**增长（n×48 字符），每会话一次则上界是常数（7 条 × ≈83 字符）。
+  按消息数冷却会让常驻成本随会话长度**线性**增长（n×48 字符），每会话一次则上界是常数
+  （7 条路由 × ≈83 字符 + 1 条兜底纪律 × ≈60 字符）。
 - `parent_session_id` 非空 ⇒ 子代理回合直接静默（取证 2026-09-16：14 天窗口 390 次 `spawn_subagent`），
   但静默分支**必须保留注入记录**（清空会让下一次「无 parent」的调用重复注入同一技能）。
 - 用户下了硬约束（只评审 / 不要执行 / 只改这一处）⇒ 抑制「并行 / 发散」类提醒。
@@ -38,6 +41,10 @@ import sys
 import time
 
 STATE_DIRNAME = "workflow-trigger-state"
+
+# 兜底纪律规则的去重键。刻意不用真实技能名：它不对应任何 SKILL.md，注入的就是文本本身
+# （为了这行去读一遍技能正文 ≈5k token，比它要省的还贵）。
+DISCIPLINE_SKILL = "output-diet"
 
 # 规则表 = 单一事实来源。kind: "parallel"/"divergence" 会被用户硬约束抑制。
 # 顺序即优先级（越靠前越「贴着动作」）。rx 只匹配本轮用户消息。
@@ -71,6 +78,15 @@ RULES: list = [
      "rx": r"(交接|交给下一个|换会话|新会话继续|进展交底)",
      "skill": "agent-handover-prompts",
      "action": "按「任务卡 / 进展交底」两形态之一写交接文档。"},
+    # 兜底（表尾 = 优先级最低）：无其他规则命中时注入一次「上下文成本纪律」。
+    # 为什么放表尾而不是表首：decide() 只返回一条规则，放表首会挤掉门禁类（push / 声明完成）
+    # 与路由类该出现的那一轮。兜底位保证纪律仍每会话注入一次，只延后到「没有更高优先级命中」那轮。
+    # 成本上界是常数：一行 ≈60 字符，进历史后随上下文重发时按缓存命中价计费。
+    {"id": "output_diet", "kind": "discipline", "rx": r".",
+     "skill": DISCIPLINE_SKILL,
+     "text": "工具输出是最大的上下文成本（进了对话的内容之后每轮重发）：长输出写文件、"
+             "对话里只留结论与文件路径；读大文件先给行号范围（search_files 定位 + offset/limit），"
+             "不要整篇读进来。细则见 using-superpowers 技能《上下文成本纪律》。"},
 ]
 
 # 用户下了硬约束 ⇒ 只抑制「并行 / 发散」两类（验证与 push 门禁不抑制）
@@ -162,6 +178,12 @@ def decide(user_message, n_history: int, parent_session_id: str, state: dict):
 
 
 def render(rule: dict) -> str:
+    """两种形态：带 `text` 的直接注入（兜底纪律），否则是「先读技能」路由提示。
+
+    纪律行只回指技能名、不回指路径：它要省的就是体积，多写一行路径是反向操作。
+    """
+    if rule.get("text"):
+        return f"[工作流触发·{rule['id']}] {rule['text']}"
     return f"[工作流触发·{rule['id']}] 先读技能 {rule['skill']}：{rule['action']}"
 
 
@@ -193,25 +215,32 @@ def save_state(path: pathlib.Path, state: dict, n: int) -> None:
 
 def selftest() -> int:
     """内联自测：纯函数 decide() 的表驱动用例（不写状态文件、不读 stdin）。"""
+    def _sk(rule):
+        """命中规则的 skill 键；None 表示不注入。"""
+        return rule["skill"] if rule else None
+
     cases = [
-        # (用户消息, 历史条数, 期望技能 或 None, 说明)
+        # (用户消息, 历史条数, 期望命中的 skill 键, 说明)
+        # 注意：有兜底纪律后 `None` 不再是可达期望——除它以外无命中时，它命中。
         ("把这三个目录的资料分别清点一遍", 10, "subagent-fanout-delivery", "只读批量 ⇒ B 档"),
         ("这个模块要并行拆给几个子代理做", 6, "subagent-fanout-delivery", "显式并行"),
         ("帮我优化一下这个算法的吞吐，现在 12 fps", 20, "using-superpowers", "开放目标 + 会话够长 ⇒ C 档"),
         ("帮我优化一下这个算法的吞吐，现在 12 fps", 0, "using-superpowers", "**首轮**长句也注入（会话短但问题成形）"),
         ("继续优化", 20, "using-superpowers", "会话已长 ⇒ 短消息也注入"),
-        ("帮我优化一下吞吐", 2, None, "短消息 + 会话短 ⇒ 两边都不满足，不注入"),
+        ("帮我优化一下吞吐", 2, DISCIPLINE_SKILL,
+         "体积门槛挡住 open_ended ⇒ 落到兜底纪律（门槛若失效会返回 using-superpowers）"),
         ("我把改动都改好了", 12, "pre-commit-verification", "声明完成"),
         ("准备 push 到 main", 14, "review-gate", "push 门禁"),
         ("先给我一份迁移方案，别动手", 14, "plan", "plan 类不受抑制词影响"),
-        ("只评审，不要执行；顺便看看能不能并行", 14, None, "抑制词 ⇒ parallel 类不注入"),
+        ("只评审，不要执行；顺便看看能不能并行", 14, DISCIPLINE_SKILL,
+         "抑制词压掉 parallel 类 ⇒ 落到兜底纪律（抑制若失效会返回 fanout 技能）"),
         ("帮我写个交接文档", 9, "agent-handover-prompts", "交接"),
-        ("今天天气怎么样", 9, None, "零命中 ⇒ 不注入"),
+        ("今天天气怎么样", 9, DISCIPLINE_SKILL, "无其他命中 ⇒ 只注入成本纪律"),
     ]
     bad = 0
     for msg, n, want, note in cases:
         got, _st = decide(msg, n, parent_session_id="", state={})
-        got_sk = got["skill"] if got else None
+        got_sk = _sk(got)
         ok = got_sk == want
         bad += 0 if ok else 1
         print(("  PASS " if ok else "  FAIL "), f"want={want!s:<32} got={got_sk!s:<32} {note}")
@@ -226,24 +255,26 @@ def selftest() -> int:
     st = {}
     r1, st = decide("准备 push 到 main", 14, parent_session_id="", state=st)
     r2, st = decide("准备 push 到 main", 999, parent_session_id="", state=st)
-    ok = r1 is not None and r2 is None
+    ok = _sk(r1) == "review-gate" and _sk(r2) == DISCIPLINE_SKILL
     bad += 0 if ok else 1
-    print(("  PASS " if ok else "  FAIL "), "同技能隔再久也不再注入（每会话一次）")
+    print(("  PASS " if ok else "  FAIL "), "同技能隔再久也不再注入（每会话一次）；该轮落到兜底纪律")
 
     st = {}
     ra, st = decide("准备 push 到 main", 14, parent_session_id="", state=st)
     rb, st = decide("帮我写个交接文档", 20, parent_session_id="", state=st)
     rc, _st = decide("准备 push 到 main", 30, parent_session_id="", state=st)
-    ok = ra is not None and rb is not None and rc is None
+    ok = (_sk(ra) == "review-gate" and _sk(rb) == "agent-handover-prompts"
+          and _sk(rc) == DISCIPLINE_SKILL)
     bad += 0 if ok else 1
     print(("  PASS " if ok else "  FAIL "), "不同技能各自注入一次，已注入的不再重复")
 
     # 兼容旧状态文件：老字段 `last` 是 {技能: 条数}，其中出现的技能同样视为「已注入」
     r, _st = decide("准备 push 到 main", 99, parent_session_id="",
                     state={"last": {"review-gate": 5}})
-    ok = r is None
+    ok = _sk(r) == DISCIPLINE_SKILL
     bad += 0 if ok else 1
-    print(("  PASS " if ok else "  FAIL "), "兼容旧状态文件 last 字段（已注入即不再注入）")
+    print(("  PASS " if ok else "  FAIL "),
+          "兼容旧状态文件 last 字段（review-gate 视为已注入 ⇒ 落到兜底纪律）")
 
     # 静默分支**必须保留历史注入记录**：子会话里 parent 键时有时无（本仓实测形态），
     # 一旦静默那轮把记录清空，下一次「无 parent」的调用就能重新注入。
@@ -264,7 +295,9 @@ def selftest() -> int:
     # 坏 state 不得抛：脚本的自我约束是「任何异常吞掉、绝不影响回合」。
     # 状态文件可能被手改、被旧版本写过、或未来字段改型。期望值按「每会话一次」语义给：
     # 出现过的技能名（含旧字段 last 的键）一律视为已注入；结构性坏值当作「没注入过」。
-    for bad_state, want_rule in (
+    # 期望值改成「是否把 review-gate 当已注入」：有兜底纪律后 r 不再可能为 None，
+    # 原有的 `r is not None` 会恒真，测不出坏 state 的实际影响。
+    for bad_state, want_review_gate in (
         ({"last": [1, 2]}, True),                            # last 是列表：不认 ⇒ 当没注入过
         ({"last": {"review-gate": "oops"}}, False),          # 旧字段键名合法 ⇒ 视为已注入
         ({"last": None}, True),
@@ -272,20 +305,20 @@ def selftest() -> int:
     ):
         try:
             r, _st = decide("准备 push 到 main", 14, parent_session_id="", state=bad_state)
-            ok = (r is not None) == want_rule
+            ok = (_sk(r) == "review-gate") == want_review_gate
         except Exception as exc:                             # noqa: BLE001
             ok = False
             print("        坏 state 抛错:", type(exc).__name__, exc)
         bad += 0 if ok else 1
         print(("  PASS " if ok else "  FAIL "),
-              f"坏 state 不抛且判定正确 {bad_state!r} want_rule={want_rule}")
+              f"坏 state 不抛且 review-gate 判定正确 {bad_state!r} want={want_review_gate}")
 
     # payload 不带 conversation_history（n 恒为 0）在「每会话一次」语义下不再是退化：
     # 判定不依赖消息数，只要求「本会话只注入一次」。用用例钉死，避免将来被无声改成「每轮都注入」。
     _st = {}
     r1, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
     r2, _st = decide("准备 push 到 main", 0, parent_session_id="", state=_st)
-    ok = r1 is not None and r2 is None
+    ok = _sk(r1) == "review-gate" and _sk(r2) == DISCIPLINE_SKILL
     bad += 0 if ok else 1
     print(("  PASS " if ok else "  FAIL "), "history 缺失(n=0)：本会话只注入一次（已知限制，钉死）")
 
@@ -310,6 +343,23 @@ def selftest() -> int:
             print("        载荷级提取抛错:", type(exc).__name__, exc)
         bad += 0 if ok else 1
         print(("  PASS " if ok else "  FAIL "), label)
+
+    # 兜底纪律：同样「每会话一次」，且不因用户下了抑制词而消失（它不属于 parallel / divergence）。
+    st = {}
+    d1, st = decide("今天天气怎么样", 5, parent_session_id="", state=st)
+    d2, st = decide("今天天气怎么样", 6, parent_session_id="", state=st)
+    d3, _st = decide("只评审，不要执行", 7, parent_session_id="", state=st)
+    ok = (d1 or {}).get("id") == "output_diet" and d2 is None and d3 is None
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "), "兜底纪律每会话只注入一次，抑制词下也不重复注入")
+
+    # 子代理回合必须静默（连兜底纪律也不进子代理），且保留注入记录。
+    st = {}
+    p1, st = decide("随便聊聊", 3, parent_session_id="", state=st)
+    p2, _s = decide("随便聊聊", 4, parent_session_id="sub-1", state=st)
+    ok = (p1 or {}).get("id") == "output_diet" and p2 is None and "output-diet" in (st.get("injected") or [])
+    bad += 0 if ok else 1
+    print(("  PASS " if ok else "  FAIL "), "子代理回合静默（兜底纪律也不注入子代理）")
 
     print("selftest:", "OK" if bad == 0 else f"{bad} 项失败")
     return 0 if bad == 0 else 1
