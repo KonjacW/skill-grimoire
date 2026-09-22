@@ -4,7 +4,7 @@
 
 > *grimoire* ＝ 魔导书：把技能收进一本随时可翻阅、维护、增补的书。
 
-十一个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
+十二个技能串成一条闭环：**怎么把活安全地分出去** → **怎么确认活真的干完了** → **怎么收尾**。
 它们不绑定具体项目、不依赖第三方库；技能以文本为主，只有 `long-running-progress-monitoring` 带两个 PowerShell 脚本（`active/long-running-progress-monitoring/scripts/`），装进你的 Codex 就能用。
 
 ## 工作流全景
@@ -63,6 +63,7 @@
 | `agent-handover-prompts` | **交接**：任务卡交接 vs 进展交底，结论四层可信度 + 机检清单 | 换会话、交给无记忆的下一 agent |
 | `long-running-progress-monitoring` | **长任务进度监控**：description 原文「Use to monitor long-running training or batch jobs.」；含自带脚本与文档化内联降级 | 长跑训练 / 批处理作业需要看进度时 |
 | `conversation-progress-report` | **对话进展汇报**：对话一出现阶段成果就**自动**维护一份面向用户本人的成果汇报（不用口令；「开/看/关汇报」只作手动控制面）；含 Hermes 侧 `pre_llm_call` 提醒脚本 | 对话出现阶段成果时自动触发 |
+| `explanation-style` | **解释形态**：对话里回答「解释 / 说明」时沿对象自身的逻辑阶段讲——结论先行、一概念只讲一次、单节 ≤300 字符、类比必须能推出判断 | 用户说「解释 / 说明 / 讲一下 / 为什么」 |
 
 ## 安装
 

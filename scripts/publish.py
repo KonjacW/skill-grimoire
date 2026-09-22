@@ -50,6 +50,8 @@ SOURCES = {
     "test-driven-development":           f"{CODEX}/active/test-driven-development",
     # 2026-09-15 加入：同一对话内、面向用户本人的周期性成果汇报（口令「开汇报」启动，双轨更新）。
     "conversation-progress-report":      f"{CODEX}/active/conversation-progress-report",
+    # 2026-09-22 加入：对话里「解释 / 说明」类回答的形态规范（结论先行 / 一概念只讲一次 / 类比须有产出）。
+    "explanation-style":                 f"{CODEX}/active/explanation-style",
 }
 KEEP_TOP = {"active", "scripts", "README.md", "ROADMAP.md", "LICENSE", ".git", ".gitignore", ".gitattributes"}
 TEXT_EXT = {".md", ".json", ".py", ".js", ".sh", ".ps1", ".dot", ".yaml", ".yml", ".toml", ".txt", ".html", ".css"}
